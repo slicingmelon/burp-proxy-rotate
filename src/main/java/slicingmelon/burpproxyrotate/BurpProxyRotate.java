@@ -7,38 +7,30 @@ package slicingmelon.burpproxyrotate;
 
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
-import burp.api.montoya.http.handler.*;
-import burp.api.montoya.http.message.requests.HttpRequest;
-import burp.api.montoya.proxy.http.ProxyRequestHandler;
-import burp.api.montoya.proxy.http.ProxyRequestReceivedAction;
-import burp.api.montoya.proxy.http.ProxyRequestToBeSentAction;
-import burp.api.montoya.proxy.http.InterceptedRequest;
-import burp.api.montoya.http.HttpService;
 import burp.api.montoya.ui.contextmenu.ContextMenuEvent;
 import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.AbstractTableModel;
-import javax.swing.table.DefaultTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.net.InetSocketAddress;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class BurpProxyRotate implements BurpExtension {
     
@@ -75,12 +67,6 @@ public class BurpProxyRotate implements BurpExtension {
         
         // Load saved proxies
         loadSavedProxies();
-        
-        // Register as HTTP handler
-        registerHttpHandler();
-        
-        // Register proxy handlers for earlier interception
-        registerProxyHandlers();
         
         // Create and register the UI
         SwingUtilities.invokeLater(() -> {
@@ -154,88 +140,6 @@ public class BurpProxyRotate implements BurpExtension {
         api.persistence().preferences().setString(PROXY_LIST_KEY, sb.toString());
         api.persistence().preferences().setString(ENABLED_KEY, String.valueOf(extensionEnabled));
         api.persistence().preferences().setString(PORT_KEY, String.valueOf(localPort));
-    }
-    
-    private void registerHttpHandler() {
-        api.http().registerHttpHandler(new HttpHandler() {
-            @Override
-            public RequestToBeSentAction handleHttpRequestToBeSent(HttpRequestToBeSent request) {
-                if (!extensionEnabled || proxyList.isEmpty()) {
-                    return RequestToBeSentAction.continueWith(request);
-                }
-                
-                ProxyEntry proxy = getRandomProxy();
-                if (proxy != null) {
-                    logMessage("Routing request to: " + request.url() + " through SOCKS proxy: " + proxy.getHost() + ":" + proxy.getPort());
-                    
-                    // Instead of modifying the request with a SOCKS proxy directly,
-                    // we'll add a header to mark it for special handling by the proxy handler
-                    // This is just to track which requests have been processed
-                    HttpRequest newRequest = request.withAddedHeader("X-SOCKS-Proxy", 
-                            proxy.getHost() + ":" + proxy.getPort());
-                    
-                    return RequestToBeSentAction.continueWith(newRequest);
-                }
-                
-                return RequestToBeSentAction.continueWith(request);
-            }
-            
-            @Override
-            public ResponseReceivedAction handleHttpResponseReceived(HttpResponseReceived response) {
-                return ResponseReceivedAction.continueWith(response);
-            }
-        });
-    }
-    
-    private void registerProxyHandlers() {
-        api.proxy().registerRequestHandler(new ProxyRequestHandler() {
-            @Override
-            public ProxyRequestReceivedAction handleRequestReceived(InterceptedRequest interceptedRequest) {
-                return ProxyRequestReceivedAction.continueWith(interceptedRequest);
-            }
-            
-            @Override
-            public ProxyRequestToBeSentAction handleRequestToBeSent(InterceptedRequest interceptedRequest) {
-                if (!extensionEnabled || proxyList.isEmpty()) {
-                    return ProxyRequestToBeSentAction.continueWith(interceptedRequest);
-                }
-                
-                ProxyEntry proxy = getRandomProxy();
-                if (proxy != null) {
-                    logMessage("Routing intercepted request to: " + interceptedRequest.url() + " through SOCKS proxy: " + proxy.getHost() + ":" + proxy.getPort());
-                    
-                    // Add a header to mark this request as being sent through a SOCKS proxy
-                    HttpRequest newRequest = interceptedRequest.withAddedHeader("X-SOCKS-Proxy", 
-                            proxy.getHost() + ":" + proxy.getPort());
-                    
-                    return ProxyRequestToBeSentAction.continueWith(newRequest);
-                }
-                
-                return ProxyRequestToBeSentAction.continueWith(interceptedRequest);
-            }
-        });
-        
-        // Since we can't directly modify requests to use a SOCKS proxy,
-        // we'll use Burp's network settings to configure the SOCKS proxy
-        // and display instructions to the user
-        logMessage("Important: This extension adds a header to mark requests that should go through a proxy.");
-        logMessage("You need to configure Burp's SOCKS proxy settings manually:");
-        logMessage("1. Go to Settings > Network > Connections > SOCKS Proxy");
-        logMessage("2. Check 'Use SOCKS proxy'");
-        logMessage("3. Enter the SOCKS proxy details");
-        logMessage("The extension will rotate which proxy to use for each request in your list");
-    }
-    
-    private ProxyEntry getRandomProxy() {
-        proxyListLock.readLock().lock();
-        try {
-            if (proxyList.isEmpty()) {
-                return null;
-            }
-            return proxyList.get(random.nextInt(proxyList.size()));
-        } finally {
-            proxyListLock.readLock().unlock();
-        }
     }
     
     private JComponent createUserInterface() {
@@ -1010,6 +914,10 @@ public class BurpProxyRotate implements BurpExtension {
     private ProxyEntry getRandomProxy() {
         proxyListLock.readLock().lock();
         try {
+            if (proxyList.isEmpty()) {
+                return null;
+            }
+            
             // Create a list of active proxies
             List<ProxyEntry> activeProxies = new ArrayList<>();
             for (ProxyEntry proxy : proxyList) {
