@@ -26,11 +26,16 @@ import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Queue;
 
 public class BurpProxyRotate implements BurpExtension {
     
@@ -56,6 +61,17 @@ public class BurpProxyRotate implements BurpExtension {
     private static final String PROXY_LIST_KEY = "proxyList";
     private static final String ENABLED_KEY = "enabled";
     private static final String PORT_KEY = "localPort";
+    
+    // Add fields for performance settings
+    private int bufferSize = 131072; // 128KB
+    private int connectionTimeout = 10000; // 10 seconds
+    private int dataTimeout = 30000; // 30 seconds
+    private boolean verboseLogging = false;
+    private int maxConnections = 200;
+    
+    // Add a map for connection pooling
+    private final Map<String, Queue<Socket>> proxyConnectionPool = new ConcurrentHashMap<>();
+    private final int maxPooledConnectionsPerProxy = 5;
     
     @Override
     public void initialize(MontoyaApi api) {
@@ -392,7 +408,11 @@ public class BurpProxyRotate implements BurpExtension {
             stopProxyServer();
         }
         
-        threadPool = Executors.newCachedThreadPool();
+        // Use a fixed thread pool based on maxConnections
+        threadPool = Executors.newFixedThreadPool(maxConnections);
+        
+        // Initialize connection pool
+        initializeConnectionPool();
         
         serverThread = new Thread(() -> {
             try {
@@ -404,6 +424,8 @@ public class BurpProxyRotate implements BurpExtension {
                 while (serverRunning && !serverSocket.isClosed()) {
                     try {
                         Socket clientSocket = serverSocket.accept();
+                        clientSocket.setTcpNoDelay(true); // Disable Nagle's algorithm
+                        clientSocket.setSoTimeout(dataTimeout);
                         threadPool.execute(() -> handleSocksConnection(clientSocket));
                     } catch (IOException e) {
                         if (serverRunning) {
@@ -453,6 +475,9 @@ public class BurpProxyRotate implements BurpExtension {
             threadPool.shutdownNow();
         }
         
+        // Close all pooled connections
+        closeAllPooledConnections();
+        
         updateServerButtons();
         logMessage("SOCKS Proxy Rotator server stopped");
     }
@@ -470,8 +495,8 @@ public class BurpProxyRotate implements BurpExtension {
     private void handleSocksConnection(Socket clientSocket) {
         try {
             // Set larger socket buffer sizes for handling large requests
-            clientSocket.setReceiveBufferSize(65536);  // 64KB
-            clientSocket.setSendBufferSize(65536);     // 64KB
+            clientSocket.setReceiveBufferSize(bufferSize);
+            clientSocket.setSendBufferSize(bufferSize);
             
             // Basic SOCKS5 protocol implementation
             InputStream clientIn = clientSocket.getInputStream();
@@ -482,7 +507,9 @@ public class BurpProxyRotate implements BurpExtension {
             int read = clientIn.read(buffer, 0, 2);
             
             if (read != 2 || buffer[0] != 0x05) {
-                logMessage("Invalid SOCKS protocol version");
+                if (verboseLogging) {
+                    logMessage("Invalid SOCKS protocol version");
+                }
                 clientSocket.close();
                 return;
             }
@@ -491,7 +518,9 @@ public class BurpProxyRotate implements BurpExtension {
             read = clientIn.read(buffer, 0, numMethods);
             
             if (read != numMethods) {
-                logMessage("Failed to read authentication methods");
+                if (verboseLogging) {
+                    logMessage("Failed to read authentication methods");
+                }
                 clientSocket.close();
                 return;
             }
@@ -502,7 +531,9 @@ public class BurpProxyRotate implements BurpExtension {
             // Read connection request
             read = clientIn.read(buffer, 0, 4);
             if (read != 4 || buffer[0] != 0x05 || buffer[1] != 0x01) {
-                logMessage("Invalid SOCKS connection request");
+                if (verboseLogging) {
+                    logMessage("Invalid SOCKS connection request");
+                }
                 clientSocket.close();
                 return;
             }
@@ -517,7 +548,9 @@ public class BurpProxyRotate implements BurpExtension {
                     byte[] ipv4 = new byte[4];
                     read = clientIn.read(ipv4);
                     if (read != 4) {
-                        logMessage("Failed to read IPv4 address");
+                        if (verboseLogging) {
+                            logMessage("Failed to read IPv4 address");
+                        }
                         clientSocket.close();
                         return;
                     }
@@ -530,7 +563,9 @@ public class BurpProxyRotate implements BurpExtension {
                     byte[] domain = new byte[domainLength];
                     read = clientIn.read(domain);
                     if (read != domainLength) {
-                        logMessage("Failed to read domain name");
+                        if (verboseLogging) {
+                            logMessage("Failed to read domain name");
+                        }
                         clientSocket.close();
                         return;
                     }
@@ -538,12 +573,16 @@ public class BurpProxyRotate implements BurpExtension {
                     break;
                     
                 case 0x04: // IPv6
-                    logMessage("IPv6 addresses not supported yet");
+                    if (verboseLogging) {
+                        logMessage("IPv6 addresses not supported yet");
+                    }
                     clientSocket.close();
                     return;
                     
                 default:
-                    logMessage("Unsupported address type: " + addressType);
+                    if (verboseLogging) {
+                        logMessage("Unsupported address type: " + addressType);
+                    }
                     clientSocket.close();
                     return;
             }
@@ -552,7 +591,9 @@ public class BurpProxyRotate implements BurpExtension {
             byte[] portBytes = new byte[2];
             read = clientIn.read(portBytes);
             if (read != 2) {
-                logMessage("Failed to read port");
+                if (verboseLogging) {
+                    logMessage("Failed to read port");
+                }
                 clientSocket.close();
                 return;
             }
@@ -566,102 +607,132 @@ public class BurpProxyRotate implements BurpExtension {
                 return;
             }
             
-            logMessage("Routing connection to " + targetHost + ":" + targetPort + 
-                     " via SOCKS proxy " + proxy.getHost() + ":" + proxy.getPort());
+            // Only log if we're not being verbose to reduce overhead
+            if (!verboseLogging) {
+                logMessage("Routing connection to " + targetHost + ":" + targetPort + 
+                        " via SOCKS proxy " + proxy.getHost() + ":" + proxy.getPort());
+            }
             
             // Connect to the upstream SOCKS proxy
-            Socket upstreamSocket = new Socket(proxy.getHost(), proxy.getPort());
-            InputStream upstreamIn = upstreamSocket.getInputStream();
-            OutputStream upstreamOut = upstreamSocket.getOutputStream();
-            
-            // SOCKS5 handshake with upstream proxy
-            upstreamOut.write(new byte[] { 0x05, 0x01, 0x00 });
-            read = upstreamIn.read(buffer, 0, 2);
-            if (read != 2 || buffer[0] != 0x05 || buffer[1] != 0x00) {
-                logMessage("Upstream proxy handshake failed");
-                clientSocket.close();
-                upstreamSocket.close();
-                return;
-            }
-            
-            // Forward the connection request to the upstream proxy
-            byte[] requestHeader = new byte[4];
-            requestHeader[0] = 0x05; // SOCKS5
-            requestHeader[1] = 0x01; // CONNECT
-            requestHeader[2] = 0x00; // Reserved
-            requestHeader[3] = (byte)addressType; // Address type
-            
-            upstreamOut.write(requestHeader);
-            
-            // Forward address based on type
-            if (addressType == 0x01) { // IPv4
-                String[] parts = targetHost.split("\\.");
-                for (String part : parts) {
-                    upstreamOut.write(Integer.parseInt(part) & 0xFF);
+            Socket upstreamSocket = null;
+            try {
+                upstreamSocket = getProxyConnection(proxy);
+                InputStream upstreamIn = upstreamSocket.getInputStream();
+                OutputStream upstreamOut = upstreamSocket.getOutputStream();
+                
+                // SOCKS5 handshake with upstream proxy
+                upstreamOut.write(new byte[] { 0x05, 0x01, 0x00 });
+                read = upstreamIn.read(buffer, 0, 2);
+                if (read != 2 || buffer[0] != 0x05 || buffer[1] != 0x00) {
+                    if (verboseLogging) {
+                        logMessage("Upstream proxy handshake failed");
+                    }
+                    clientSocket.close();
+                    upstreamSocket.close();
+                    return;
                 }
-            } else if (addressType == 0x03) { // Domain
-                upstreamOut.write(targetHost.length() & 0xFF);
-                upstreamOut.write(targetHost.getBytes());
-            }
-            
-            // Forward port
-            upstreamOut.write((targetPort >> 8) & 0xFF);
-            upstreamOut.write(targetPort & 0xFF);
-            
-            // Read response from upstream proxy
-            read = upstreamIn.read(buffer, 0, 4);
-            if (read != 4 || buffer[0] != 0x05 || buffer[1] != 0x00) {
-                logMessage("Upstream proxy connection failed");
-                clientSocket.close();
-                upstreamSocket.close();
-                return;
-            }
-            
-            // Skip the bound address in the response
-            if (buffer[3] == 0x01) { // IPv4
-                upstreamIn.read(new byte[4 + 2]); // 4 for IPv4, 2 for port
-            } else if (buffer[3] == 0x03) { // Domain
-                int len = upstreamIn.read() & 0xFF;
-                upstreamIn.read(new byte[len + 2]); // len for domain, 2 for port
-            } else if (buffer[3] == 0x04) { // IPv6
-                upstreamIn.read(new byte[16 + 2]); // 16 for IPv6, 2 for port
-            }
-            
-            // Send success response to client
-            byte[] response = new byte[10]; // IPv4 format response
-            response[0] = 0x05; // SOCKS5
-            response[1] = 0x00; // Success
-            response[2] = 0x00; // Reserved
-            response[3] = 0x01; // IPv4
-            // IP and port are all zeros (placeholder)
-            
-            clientOut.write(response);
-            
-            // Start bidirectional data transfer
-            threadPool.execute(() -> {
+                
+                // Forward the connection request to the upstream proxy
+                byte[] requestHeader = new byte[4];
+                requestHeader[0] = 0x05; // SOCKS5
+                requestHeader[1] = 0x01; // CONNECT
+                requestHeader[2] = 0x00; // Reserved
+                requestHeader[3] = (byte)addressType; // Address type
+                
+                upstreamOut.write(requestHeader);
+                
+                // Forward address based on type
+                if (addressType == 0x01) { // IPv4
+                    String[] parts = targetHost.split("\\.");
+                    for (String part : parts) {
+                        upstreamOut.write(Integer.parseInt(part) & 0xFF);
+                    }
+                } else if (addressType == 0x03) { // Domain
+                    upstreamOut.write(targetHost.length() & 0xFF);
+                    upstreamOut.write(targetHost.getBytes());
+                }
+                
+                // Forward port
+                upstreamOut.write((targetPort >> 8) & 0xFF);
+                upstreamOut.write(targetPort & 0xFF);
+                
+                // Read response from upstream proxy
+                read = upstreamIn.read(buffer, 0, 4);
+                if (read != 4 || buffer[0] != 0x05 || buffer[1] != 0x00) {
+                    if (verboseLogging) {
+                        logMessage("Upstream proxy connection failed");
+                    }
+                    clientSocket.close();
+                    upstreamSocket.close();
+                    return;
+                }
+                
+                // Skip the bound address in the response
+                if (buffer[3] == 0x01) { // IPv4
+                    upstreamIn.read(new byte[4 + 2]); // 4 for IPv4, 2 for port
+                } else if (buffer[3] == 0x03) { // Domain
+                    int len = upstreamIn.read() & 0xFF;
+                    upstreamIn.read(new byte[len + 2]); // len for domain, 2 for port
+                } else if (buffer[3] == 0x04) { // IPv6
+                    upstreamIn.read(new byte[16 + 2]); // 16 for IPv6, 2 for port
+                }
+                
+                // Send success response to client
+                byte[] response = new byte[10]; // IPv4 format response
+                response[0] = 0x05; // SOCKS5
+                response[1] = 0x00; // Success
+                response[2] = 0x00; // Reserved
+                response[3] = 0x01; // IPv4
+                // IP and port are all zeros (placeholder)
+                
+                clientOut.write(response);
+                
+                // Use larger buffers for data transfer
+                byte[] clientToServerBuffer = new byte[bufferSize];
+                byte[] serverToClientBuffer = new byte[bufferSize];
+                
+                // Start bidirectional data transfer (use one thread for each direction)
+                AtomicBoolean transferComplete = new AtomicBoolean(false);
+                
+                // Client to server thread
+                threadPool.execute(() -> {
+                    try {
+                        int bytesRead;
+                        while (!transferComplete.get() && (bytesRead = clientIn.read(clientToServerBuffer)) != -1) {
+                            upstreamOut.write(clientToServerBuffer, 0, bytesRead);
+                            upstreamOut.flush();
+                        }
+                    } catch (IOException e) {
+                        // Connection closed or timeout
+                    } finally {
+                        transferComplete.set(true);
+                    }
+                });
+                
+                // Server to client (in current thread)
                 try {
-                    byte[] buf = new byte[8192];
                     int bytesRead;
-                    while ((bytesRead = clientIn.read(buf)) != -1) {
-                        upstreamOut.write(buf, 0, bytesRead);
-                        upstreamOut.flush();
+                    while (!transferComplete.get() && (bytesRead = upstreamIn.read(serverToClientBuffer)) != -1) {
+                        clientOut.write(serverToClientBuffer, 0, bytesRead);
+                        clientOut.flush();
                     }
                 } catch (IOException e) {
-                    // Connection closed
-                } finally {
+                    // Connection closed or timeout
+                }
+                
+                // Return the connection to the pool if possible
+                returnProxyConnection(proxy, upstreamSocket);
+                upstreamSocket = null; // Prevent double closing
+                
+            } catch (IOException e) {
+                logMessage("Error handling SOCKS connection: " + e.getMessage());
+                if (upstreamSocket != null) {
                     try {
                         upstreamSocket.close();
-                    } catch (IOException e) {
+                    } catch (IOException ex) {
                         // Ignore
                     }
                 }
-            });
-            
-            byte[] buf = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = upstreamIn.read(buf)) != -1) {
-                clientOut.write(buf, 0, bytesRead);
-                clientOut.flush();
             }
             
         } catch (IOException e) {
@@ -1022,5 +1093,92 @@ public class BurpProxyRotate implements BurpExtension {
     // Keep compatibility with existing code
     private void addProxy(String host, int port) {
         addProxy(new ProxyEntry(host, port));
+    }
+    
+    // Initialize connection pool
+    private void initializeConnectionPool() {
+        proxyConnectionPool.clear();
+        
+        proxyListLock.readLock().lock();
+        try {
+            for (ProxyEntry proxy : proxyList) {
+                if (proxy.isActive()) {
+                    proxyConnectionPool.put(
+                        proxy.getHost() + ":" + proxy.getPort(), 
+                        new ConcurrentLinkedQueue<>()
+                    );
+                }
+            }
+        } finally {
+            proxyListLock.readLock().unlock();
+        }
+    }
+    
+    // Get a connection from the pool or create a new one
+    private Socket getProxyConnection(ProxyEntry proxy) throws IOException {
+        String key = proxy.getHost() + ":" + proxy.getPort();
+        Queue<Socket> pool = proxyConnectionPool.get(key);
+        
+        if (pool != null) {
+            Socket socket = pool.poll();
+            if (socket != null && !socket.isClosed() && socket.isConnected()) {
+                if (verboseLogging) {
+                    logMessage("Using pooled connection to " + key);
+                }
+                return socket;
+            }
+        }
+        
+        // Create a new connection
+        Socket socket = new Socket();
+        socket.setTcpNoDelay(true);
+        socket.setReceiveBufferSize(bufferSize);
+        socket.setSendBufferSize(bufferSize);
+        socket.setSoTimeout(dataTimeout);
+        socket.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()), connectionTimeout);
+        
+        if (verboseLogging) {
+            logMessage("Created new connection to " + key);
+        }
+        
+        return socket;
+    }
+    
+    // Return a connection to the pool
+    private void returnProxyConnection(ProxyEntry proxy, Socket socket) {
+        if (socket == null || socket.isClosed() || !socket.isConnected()) {
+            return;
+        }
+        
+        String key = proxy.getHost() + ":" + proxy.getPort();
+        Queue<Socket> pool = proxyConnectionPool.get(key);
+        
+        if (pool != null && pool.size() < maxPooledConnectionsPerProxy) {
+            pool.offer(socket);
+            if (verboseLogging) {
+                logMessage("Returned connection to pool: " + key);
+            }
+        } else {
+            try {
+                socket.close();
+            } catch (IOException e) {
+                // Ignore
+            }
+        }
+    }
+    
+    // Close all pooled connections
+    private void closeAllPooledConnections() {
+        for (Queue<Socket> pool : proxyConnectionPool.values()) {
+            Socket socket;
+            while ((socket = pool.poll()) != null) {
+                try {
+                    socket.close();
+                } catch (IOException e) {
+                    // Ignore
+                }
+            }
+        }
+        proxyConnectionPool.clear();
     }
 }
