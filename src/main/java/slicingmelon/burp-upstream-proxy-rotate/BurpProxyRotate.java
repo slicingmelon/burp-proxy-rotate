@@ -3,7 +3,7 @@
  * 
  * This extension routes each HTTP request through a different SOCKS proxy from a provided list.
  */
-package slicingmelon.burp_upstream_proxy_rotate;
+package slicingmelon.burpproxyrotate;
 
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
