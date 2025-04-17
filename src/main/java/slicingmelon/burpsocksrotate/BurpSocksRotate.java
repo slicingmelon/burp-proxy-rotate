@@ -57,6 +57,10 @@ public class BurpSocksRotate implements BurpExtension {
     private JButton stopServerButton;
     private JTextField portField;
     
+    // Added for real-time proxy status updates
+    private static final long UI_REFRESH_INTERVAL_MS = 5000; // 5 seconds
+    private Timer uiRefreshTimer;
+    
     // Keys for persistence
     private static final String PROXY_LIST_KEY = "proxyList";
     private static final String ENABLED_KEY = "enabled"; // Persistence for context menu feature
@@ -94,12 +98,18 @@ public class BurpSocksRotate implements BurpExtension {
                 maxConnections,
                 maxPooledConnectionsPerProxy
         );
+        
+        // Set the extension reference in the service for UI updates
+        socksProxyService.setExtension(this);
 
         // Create and register the UI
         SwingUtilities.invokeLater(() -> {
             JComponent panel = createUserInterface();
             api.userInterface().registerSuiteTab("SOCKS Proxy Rotator", panel);
             updateServerButtons(); // Initialize button state based on service state (likely stopped)
+            
+            // Start UI refresh timer
+            startUiRefreshTimer();
         });
         
         // Add a context menu item to manually set the SOCKS proxy
@@ -531,6 +541,10 @@ public class BurpSocksRotate implements BurpExtension {
 
     private void shutdown() {
          logMessage("Extension unloading. Stopping proxy service...");
+         
+         // Stop UI refresh timer
+         stopUiRefreshTimer();
+         
          if (socksProxyService != null) {
             stopProxyServer(); // Use the existing stop method which calls service.stop()
          }
@@ -610,7 +624,11 @@ public class BurpSocksRotate implements BurpExtension {
     
     private void updateProxyTable() {
         if (proxyTableModel != null) {
-             SwingUtilities.invokeLater(() -> proxyTableModel.fireTableDataChanged());
+            SwingUtilities.invokeLater(() -> {
+                proxyTableModel.fireTableDataChanged();
+                // Also update server button states
+                updateServerButtons();
+            });
         }
     }
     
@@ -820,18 +838,12 @@ public class BurpSocksRotate implements BurpExtension {
             
             logMessage("Starting validation for " + total + " proxies...");
 
-             // Use a thread pool for concurrent validation? (Careful with resource limits)
-             // ExecutorService validationPool = Executors.newFixedThreadPool(10); // Example: 10 concurrent validations
-             
-             proxiesToValidate.forEach(proxy -> {
-                 // validationPool.submit(() -> { ... }); // If using pool
-                  if (validateProxy(proxy, 3)) { // Validate each proxy from the copied list
-                      activeCount.incrementAndGet();
-                  }
-                 // updateProxyTable(); // updateProxyTable is called within validateProxy now
-             });
-             
-             // validationPool.shutdown(); try { validationPool.awaitTermination(...); } catch(...) {} // If using pool
+            proxiesToValidate.forEach(proxy -> {
+                 if (validateProxy(proxy, 3)) { // Validate each proxy from the copied list
+                     activeCount.incrementAndGet();
+                 }
+                 updateProxyTable(); // Update UI after each validation
+            });
 
             logMessage("Validation complete.");
             SwingUtilities.invokeLater(() -> {
@@ -839,7 +851,6 @@ public class BurpSocksRotate implements BurpExtension {
                     "Validation complete. " + activeCount.get() + " of " + total + " proxies are active.",
                     "Validation Results", 
                     JOptionPane.INFORMATION_MESSAGE);
-                 updateProxyTable(); // Final table update just in case
             });
         }).start();
     }
@@ -913,5 +924,67 @@ public class BurpSocksRotate implements BurpExtension {
     // Keep compatibility method for adding proxy by host/port
     private void addProxy(String host, int port) {
         addProxy(new ProxyEntry(host, port));
+    }
+
+    // New method to start UI refresh timer
+    private void startUiRefreshTimer() {
+        if (uiRefreshTimer != null) {
+            uiRefreshTimer.stop();
+        }
+        
+        uiRefreshTimer = new Timer((int)UI_REFRESH_INTERVAL_MS, e -> {
+            // Update the UI with current proxy status
+            updateProxyTable();
+        });
+        uiRefreshTimer.setRepeats(true);
+        uiRefreshTimer.start();
+    }
+    
+    // Stop UI refresh timer
+    private void stopUiRefreshTimer() {
+        if (uiRefreshTimer != null) {
+            uiRefreshTimer.stop();
+            uiRefreshTimer = null;
+        }
+    }
+
+    // Add a method to disactivate and log failed proxies, callable by SocksProxyService
+    public void notifyProxyFailure(String host, int port, String errorMessage) {
+        SwingUtilities.invokeLater(() -> {
+            proxyListLock.writeLock().lock();
+            try {
+                for (ProxyEntry proxy : proxyList) {
+                    if (proxy.getHost().equals(host) && proxy.getPort() == port) {
+                        proxy.setActive(false);
+                        proxy.setErrorMessage(errorMessage != null ? errorMessage : "Connection failed");
+                        logMessage("Proxy marked inactive: " + host + ":" + port + " - " + proxy.getErrorMessage());
+                        break;
+                    }
+                }
+            } finally {
+                proxyListLock.writeLock().unlock();
+            }
+            updateProxyTable();
+        });
+    }
+    
+    // Add a method to reactivate proxies, callable by SocksProxyService
+    public void notifyProxyReactivated(String host, int port) {
+        SwingUtilities.invokeLater(() -> {
+            proxyListLock.writeLock().lock();
+            try {
+                for (ProxyEntry proxy : proxyList) {
+                    if (proxy.getHost().equals(host) && proxy.getPort() == port && !proxy.isActive()) {
+                        proxy.setActive(true);
+                        proxy.setErrorMessage("");
+                        logMessage("Proxy reactivated: " + host + ":" + port);
+                        break;
+                    }
+                }
+            } finally {
+                proxyListLock.writeLock().unlock();
+            }
+            updateProxyTable();
+        });
     }
 }

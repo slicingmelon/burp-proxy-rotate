@@ -46,6 +46,18 @@ public class SocksProxyService {
 
     // Connection pooling
     private final Map<String, Queue<Socket>> proxyConnectionPool = new ConcurrentHashMap<>();
+    // Add tracking for failed proxies
+    private final Map<String, Integer> proxyFailureCounter = new ConcurrentHashMap<>();
+    private final int MAX_FAILURES = 3; // After this many consecutive failures, mark proxy as inactive
+    private final int RETRY_ATTEMPTS = 2; // Number of different proxies to try before giving up
+    
+    // Health check interval (5 minutes)
+    private static final long HEALTH_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+    private Thread healthCheckThread;
+    private final AtomicBoolean healthCheckRunning = new AtomicBoolean(false);
+    
+    // Reference to the main extension for UI updates
+    private BurpSocksRotate extension;
 
     public SocksProxyService(List<ProxyEntry> proxyList, ReadWriteLock proxyListLock, Logging logging,
                              int bufferSize, int connectionTimeout, int dataTimeout, boolean verboseLogging,
@@ -59,6 +71,11 @@ public class SocksProxyService {
         this.verboseLogging = verboseLogging;
         this.maxConnections = maxConnections;
         this.maxPooledConnectionsPerProxy = maxPooledConnectionsPerProxy;
+    }
+
+    // Set a reference to the main extension for UI updates
+    public void setExtension(BurpSocksRotate extension) {
+        this.extension = extension;
     }
 
     public boolean isRunning() {
@@ -82,6 +99,9 @@ public class SocksProxyService {
 
         // Initialize connection pool
         initializeConnectionPool();
+        
+        // Start health check thread
+        startHealthCheckService();
 
         serverThread = new Thread(() -> {
             try {
@@ -166,11 +186,17 @@ public class SocksProxyService {
         threadPool = null;
         serverThread = null;
 
+        // Stop health check thread
+        stopHealthCheckService();
+
         logInfo("SOCKS Proxy Rotator server stopped.");
     }
 
     private void handleSocksConnection(Socket clientSocket) {
         Socket upstreamSocket = null;
+        ProxyEntry proxy = null;
+        int retryCount = 0;
+        
         try {
             clientSocket.setReceiveBufferSize(bufferSize);
             clientSocket.setSendBufferSize(bufferSize);
@@ -240,85 +266,128 @@ public class SocksProxyService {
             }
             targetPort = ((portBytes[0] & 0xFF) << 8) | (portBytes[1] & 0xFF);
 
-            // Get Upstream Proxy
-            ProxyEntry proxy = getRandomProxy();
-            if (proxy == null) {
-                logError("handleSocksConnection: No active proxies available. Closing client connection.");
-                // TODO: Send SOCKS error response to client? (e.g., Host unreachable)
+            // RETRY LOOP: Get Upstream Proxy and establish connection with retry
+            boolean connectionEstablished = false;
+            while (!connectionEstablished && retryCount <= RETRY_ATTEMPTS) {
+                // Get a random proxy, excluding previously failed ones in this attempt
+                proxy = getRandomProxy(retryCount > 0 ? proxy : null);
+                if (proxy == null) {
+                    logError("handleSocksConnection: No active proxies available. Closing client connection.");
+                    sendSocksErrorResponse(clientOut, (byte)0x01); // General server failure
+                    return;
+                }
+
+                logInfo("handleSocksConnection: Routing " + targetHost + ":" + targetPort + " via " + proxy.getHost() + ":" + proxy.getPort() + (retryCount > 0 ? " (retry #" + retryCount + ")" : ""));
+
+                // Connect to Upstream Proxy
+                try {
+                    upstreamSocket = getProxyConnection(proxy); // Throws IOException on failure
+                    logInfo("handleSocksConnection: Successfully connected to upstream proxy: " + proxy.getHost() + ":" + proxy.getPort());
+                    
+                    // Reset failure counter on successful connection
+                    String proxyKey = proxy.getHost() + ":" + proxy.getPort();
+                    proxyFailureCounter.remove(proxyKey);
+                    
+                    InputStream upstreamIn = upstreamSocket.getInputStream();
+                    OutputStream upstreamOut = upstreamSocket.getOutputStream();
+
+                    // Upstream SOCKS5 Handshake (No Auth)
+                    upstreamOut.write(new byte[]{0x05, 0x01, 0x00});
+                    read = upstreamIn.read(buffer, 0, 2);
+                    if (read != 2 || buffer[0] != 0x05 || buffer[1] != 0x00) {
+                        logError("handleSocksConnection: Upstream proxy handshake failed with " + proxy.getHost() + ":" + proxy.getPort() + ". Read=" + read + ", Resp="+(read > 0 ? buffer[0]:"N/A") + ","+(read > 1 ? buffer[1]:"N/A"));
+                        // Mark proxy as potentially bad
+                        incrementProxyFailure(proxy);
+                        closeSocketQuietly(upstreamSocket); // Close upstream before trying next
+                        upstreamSocket = null;
+                        retryCount++;
+                        continue; // Try next proxy
+                    }
+
+                    // Forward Connection Request to Upstream
+                    upstreamOut.write(new byte[]{0x05, 0x01, 0x00, (byte) addressType}); // CMD=CONNECT, RSV=0
+                    if (addressType == 0x01) { // IPv4
+                        String[] parts = targetHost.split("\\.");
+                        for (String part : parts) upstreamOut.write(Integer.parseInt(part) & 0xFF);
+                    } else if (addressType == 0x03) { // Domain
+                        upstreamOut.write(targetHost.length() & 0xFF);
+                        upstreamOut.write(targetHost.getBytes());
+                    }
+                    upstreamOut.write((targetPort >> 8) & 0xFF);
+                    upstreamOut.write(targetPort & 0xFF);
+
+                    // Read Upstream Response
+                    read = upstreamIn.read(buffer, 0, 4); // VER, REP, RSV, ATYP
+                    if (read != 4 || buffer[0] != 0x05 || buffer[1] != 0x00) { // Check for success reply (0x00)
+                        logError("handleSocksConnection: Upstream proxy refused connection to target " + targetHost + ":" + targetPort + ". Proxy=" + proxy.getHost() + ":" + proxy.getPort() + ", Read=" + read + ", ReplyCode=" + (read > 1 ? buffer[1] : "N/A"));
+                        
+                        // Not marking proxy as bad here as the issue might be with the target, not the proxy
+                        closeSocketQuietly(upstreamSocket);
+                        upstreamSocket = null;
+                        retryCount++;
+                        
+                        // If we've tried all proxies or if it's a reply that indicates target issues (not proxy issues)
+                        if (retryCount > RETRY_ATTEMPTS || (read > 1 && (buffer[1] == 0x04 || buffer[1] == 0x05 || buffer[1] == 0x06))) {
+                            // Send the actual error code to client if we have it
+                            if (read > 1) {
+                                sendSocksErrorResponse(clientOut, buffer[1]);
+                            } else {
+                                sendSocksErrorResponse(clientOut, (byte)0x01); // General server failure
+                            }
+                            return;
+                        }
+                        
+                        continue; // Try next proxy
+                    }
+
+                    // Read and discard bind address/port from upstream response
+                    int upstreamAtyp = buffer[3] & 0xFF;
+                    int bytesToSkip = 0;
+                    if (upstreamAtyp == 0x01) bytesToSkip = 4 + 2; // IPv4 + port
+                    else if (upstreamAtyp == 0x03) bytesToSkip = (upstreamIn.read() & 0xFF) + 2; // Read len byte + domain + port
+                    else if (upstreamAtyp == 0x04) bytesToSkip = 16 + 2; // IPv6 + port
+                    
+                    if (bytesToSkip > 0) {
+                        long skipped = upstreamIn.skip(bytesToSkip);
+                        // TODO: check skipped == bytesToSkip if needed
+                    }
+
+                    // Send Success Response to Client
+                    clientOut.write(new byte[]{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); // Using IPv4 BND.ADDR placeholder
+                    logInfo("handleSocksConnection: Successfully established proxy tunnel for " + targetHost + ":" + targetPort + ". Starting data transfer.");
+                    
+                    connectionEstablished = true; // Success - exit retry loop
+                } catch (IOException e) {
+                    logError("handleSocksConnection: Failed to connect to upstream proxy " + proxy.getHost() + ":" + proxy.getPort() + ": " + e.getMessage());
+                    
+                    // Mark proxy as potentially bad
+                    incrementProxyFailure(proxy);
+                    
+                    // Close any partially established connection
+                    closeSocketQuietly(upstreamSocket);
+                    upstreamSocket = null;
+                    retryCount++;
+                    
+                    // If we've tried enough proxies, give up
+                    if (retryCount > RETRY_ATTEMPTS) {
+                        sendSocksErrorResponse(clientOut, (byte)0x01); // General server failure
+                        return;
+                    }
+                }
+            }
+            
+            // If we exit the loop without establishing connection, return
+            if (!connectionEstablished || upstreamSocket == null) {
+                logError("handleSocksConnection: Failed to establish connection after " + retryCount + " retries");
+                sendSocksErrorResponse(clientOut, (byte)0x01); // General server failure
                 return;
             }
 
-            logInfo("handleSocksConnection: Routing " + targetHost + ":" + targetPort + " via " + proxy.getHost() + ":" + proxy.getPort());
-
-            // Connect to Upstream Proxy
-            try {
-                upstreamSocket = getProxyConnection(proxy); // Throws IOException on failure
-                logInfo("handleSocksConnection: Successfully connected to upstream proxy: " + proxy.getHost() + ":" + proxy.getPort());
-            } catch (IOException e) {
-                logError("handleSocksConnection: Failed to connect to upstream proxy " + proxy.getHost() + ":" + proxy.getPort() + ": " + e.getMessage());
-                // Mark proxy as potentially bad?
-                // proxy.setActive(false); // Consider adding logic to disable failing proxies temporarily
-                // proxy.setErrorMessage("Connection failed: " + e.getMessage());
-                // updateProxyListCallback.run(); // Need a way to signal UI update if proxy status changes
-                return; // Cannot proceed without upstream connection
-            }
-            InputStream upstreamIn = upstreamSocket.getInputStream();
-            OutputStream upstreamOut = upstreamSocket.getOutputStream();
-
-            // Upstream SOCKS5 Handshake (No Auth)
-            upstreamOut.write(new byte[]{0x05, 0x01, 0x00});
-            read = upstreamIn.read(buffer, 0, 2);
-            if (read != 2 || buffer[0] != 0x05 || buffer[1] != 0x00) {
-                logError("handleSocksConnection: Upstream proxy handshake failed with " + proxy.getHost() + ":" + proxy.getPort() + ". Read=" + read + ", Resp="+(read > 0 ? buffer[0]:"N/A") + ","+(read > 1 ? buffer[1]:"N/A"));
-                // Mark proxy as potentially bad?
-                closeSocketQuietly(upstreamSocket); // Close upstream before returning
-                upstreamSocket = null;
-                return;
-            }
-
-            // Forward Connection Request to Upstream
-            upstreamOut.write(new byte[]{0x05, 0x01, 0x00, (byte) addressType}); // CMD=CONNECT, RSV=0
-            if (addressType == 0x01) { // IPv4
-                String[] parts = targetHost.split("\\.");
-                for (String part : parts) upstreamOut.write(Integer.parseInt(part) & 0xFF);
-            } else if (addressType == 0x03) { // Domain
-                upstreamOut.write(targetHost.length() & 0xFF);
-                upstreamOut.write(targetHost.getBytes());
-            }
-            upstreamOut.write((targetPort >> 8) & 0xFF);
-            upstreamOut.write(targetPort & 0xFF);
-
-            // Read Upstream Response
-            read = upstreamIn.read(buffer, 0, 4); // VER, REP, RSV, ATYP
-            if (read != 4 || buffer[0] != 0x05 || buffer[1] != 0x00) { // Check for success reply (0x00)
-                logError("handleSocksConnection: Upstream proxy refused connection to target " + targetHost + ":" + targetPort + ". Proxy=" + proxy.getHost() + ":" + proxy.getPort() + ", Read=" + read + ", ReplyCode=" + (read > 1 ? buffer[1] : "N/A"));
-                // Mark proxy as potentially bad?
-                closeSocketQuietly(upstreamSocket);
-                upstreamSocket = null;
-                // TODO: Send appropriate SOCKS error back to client based on buffer[1]
-                return;
-            }
-
-            // Read and discard bind address/port from upstream response
-             int upstreamAtyp = buffer[3] & 0xFF;
-             int bytesToSkip = 0;
-             if (upstreamAtyp == 0x01) bytesToSkip = 4 + 2; // IPv4 + port
-             else if (upstreamAtyp == 0x03) bytesToSkip = (upstreamIn.read() & 0xFF) + 2; // Read len byte + domain + port
-             else if (upstreamAtyp == 0x04) bytesToSkip = 16 + 2; // IPv6 + port
-             
-             if (bytesToSkip > 0) {
-                 long skipped = upstreamIn.skip(bytesToSkip);
-                 // TODO: check skipped == bytesToSkip if needed
-             }
-
-
-            // Send Success Response to Client
-            clientOut.write(new byte[]{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); // Using IPv4 BND.ADDR placeholder
-            logInfo("handleSocksConnection: Successfully established proxy tunnel for " + targetHost + ":" + targetPort + ". Starting data transfer.");
-
-            // === Refactored Data Transfer ===
+            // === Data Transfer ===
             AtomicBoolean transferActive = new AtomicBoolean(true);
             Socket finalUpstreamSocket = upstreamSocket; // Final variable for lambda
+            InputStream upstreamIn = finalUpstreamSocket.getInputStream();
+            OutputStream upstreamOut = finalUpstreamSocket.getOutputStream();
             
             // 1. Client -> Upstream (Background Task)
             threadPool.submit(() -> {
@@ -363,26 +432,31 @@ public class SocksProxyService {
             }
 
             // Wait briefly for the background task to potentially finish signalling
-            // This isn't perfect synchronization but avoids busy-waiting indefinitely
-            // Proper synchronization would involve Futures or CountDownLatches if needed.
             try { Thread.sleep(50); } catch (InterruptedException ignored) {} 
 
             // Now that both loops have exited (or errored), try to return the upstream connection
             returnProxyConnection(proxy, upstreamSocket);
             upstreamSocket = null; // Mark as returned/handled
-            // Client socket is closed in the outer finally block
 
         } catch (IOException e) {
             logError("handleSocksConnection: IO Error during connection setup/transfer for client " + clientSocket.getRemoteSocketAddress() + ": " + e.getMessage());
+            if (proxy != null) {
+                incrementProxyFailure(proxy);
+            }
             // Close upstream if it wasn't returned/closed yet
             closeSocketQuietly(upstreamSocket);
-            // Send SOCKS error to client? (e.g., general server failure)
+            try {
+                // Try to send error response to client if we haven't sent anything yet
+                sendSocksErrorResponse(clientSocket.getOutputStream(), (byte)0x01); // General server failure
+            } catch (IOException ignored) {
+                // Ignore - we're already handling an error
+            }
         } finally {
             closeSocketQuietly(clientSocket); // Always close client socket
             // Ensure upstream is closed if not returned
-             if (upstreamSocket != null) {
-                 closeSocketQuietly(upstreamSocket);
-             }
+            if (upstreamSocket != null) {
+                closeSocketQuietly(upstreamSocket);
+            }
         }
     }
 
@@ -411,38 +485,46 @@ public class SocksProxyService {
         Queue<Socket> pool = proxyConnectionPool.get(key);
 
         if (pool != null) {
-            Socket socket = pool.poll();
-            if (socket != null && socket.isConnected() && !socket.isClosed()) {
-                // Basic check if connection is still alive (send a byte?) - Optional
-                try {
-                    socket.setSoTimeout(100); // Quick check timeout
-                    socket.getInputStream().available(); // Simple check, might not be reliable
-                    socket.setSoTimeout(dataTimeout); // Restore original timeout
-                    if (verboseLogging) logDebug("Reusing pooled connection to " + key);
-                    return socket;
-                } catch (IOException e) {
-                    if (verboseLogging) logDebug("Pooled connection to " + key + " seems dead. Closing.");
-                    closeSocketQuietly(socket);
-                    // Continue to create a new one
+            Socket socket = null;
+            
+            // Try to get a valid socket from the pool
+            while ((socket = pool.poll()) != null) {
+                if (socket.isConnected() && !socket.isClosed()) {
+                    try {
+                        socket.setSoTimeout(100); // Quick check timeout
+                        
+                        // Try to validate socket is still good
+                        if (socket.getInputStream().available() >= 0 && !socket.isInputShutdown() && !socket.isOutputShutdown()) {
+                            socket.setSoTimeout(dataTimeout); // Restore original timeout
+                            if (verboseLogging) logDebug("Reusing pooled connection to " + key);
+                            return socket;
+                        }
+                    } catch (IOException e) {
+                        // Socket is bad, close it and try next one
+                        if (verboseLogging) logDebug("Pooled connection to " + key + " seems dead: " + e.getMessage());
+                    }
                 }
+                
+                // If we reached here, socket is not usable
+                closeSocketQuietly(socket);
             }
         }
 
-        // Create a new connection if pool is empty or connection was dead
+        // Create a new connection if pool is empty or no valid connections found
         if (verboseLogging) logDebug("Creating new connection to " + key);
         Socket socket = new Socket();
         socket.setTcpNoDelay(true);
         socket.setReceiveBufferSize(bufferSize);
         socket.setSendBufferSize(bufferSize);
-        socket.setSoTimeout(dataTimeout); // Set data timeout *after* connecting
+        
         try {
             socket.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()), connectionTimeout);
             // Successfully connected, now set the data timeout
-             socket.setSoTimeout(dataTimeout);
+            socket.setSoTimeout(dataTimeout);
         } catch (IOException e) {
-             logError("Failed to connect to upstream proxy " + key + ": " + e.getMessage());
-             closeSocketQuietly(socket); // Ensure socket is closed on connection failure
-             throw e; // Re-throw exception
+            logError("Failed to connect to upstream proxy " + key + ": " + e.getMessage());
+            closeSocketQuietly(socket); // Ensure socket is closed on connection failure
+            throw e; // Re-throw exception
         }
 
         return socket;
@@ -458,24 +540,38 @@ public class SocksProxyService {
         String key = proxy.getHost() + ":" + proxy.getPort();
         Queue<Socket> pool = proxyConnectionPool.get(key);
 
-        // Check if the pool exists and has space
-        if (pool != null && pool.size() < maxPooledConnectionsPerProxy) {
-             // Optionally reset socket state (e.g., clear remaining data in buffer?)
-            try {
+        // Check if the pool exists, if proxy is still active, and if pool has space
+        if (pool != null && proxy.isActive() && pool.size() < maxPooledConnectionsPerProxy) {
+             try {
                  // Clear any potential remaining data in input buffer before pooling
                  InputStream is = socket.getInputStream();
-                 while (is.available() > 0) {
-                     is.skip(is.available());
+                 
+                 // Test if socket is still usable before returning to pool
+                 socket.setSoTimeout(100); // Quick timeout for health check
+                 
+                 // Check if socket is still valid by checking if there's data or if socket is still connected
+                 if (is.available() > 0) {
+                     // Data left in the stream - not a clean connection to pool
+                     if (verboseLogging) logDebug("Socket has remaining data, closing instead of pooling");
+                     closeSocketQuietly(socket);
+                     return;
                  }
-                pool.offer(socket);
-                if (verboseLogging) logDebug("Returned connection to pool: " + key + " (Pool size: " + pool.size() + ")");
+                 
+                 // Reset timeout to original value
+                 socket.setSoTimeout(dataTimeout);
+                 
+                 // Add to pool
+                 pool.offer(socket);
+                 if (verboseLogging) logDebug("Returned connection to pool: " + key + " (Pool size: " + pool.size() + ")");
             } catch (IOException e) {
                  logError("Error preparing socket for pooling (" + key + "): " + e.getMessage());
                  closeSocketQuietly(socket); // Close if error occurs during prep
             }
         } else {
              if (verboseLogging) {
-                 String reason = (pool == null) ? "pool doesn't exist (proxy inactive?)" : "pool full";
+                 String reason = (pool == null) ? "pool doesn't exist" : 
+                                (!proxy.isActive()) ? "proxy is inactive" : 
+                                "pool full";
                  logDebug("Closing connection instead of pooling (" + key + "): " + reason);
              }
             closeSocketQuietly(socket); // Close if pool doesn't exist or is full
@@ -497,7 +593,54 @@ public class SocksProxyService {
         logInfo("Closed " + closedCount + " pooled connections.");
     }
 
-    private ProxyEntry getRandomProxy() {
+    // Send a SOCKS5 error response to the client
+    private void sendSocksErrorResponse(OutputStream out, byte errorCode) {
+        try {
+            // SOCKS5 error response
+            out.write(new byte[]{0x05, errorCode, 0x00, 0x01, 0, 0, 0, 0, 0, 0});
+            out.flush();
+        } catch (IOException e) {
+            logDebug("Failed to send error response to client: " + e.getMessage());
+        }
+    }
+
+    // Track proxy failures and mark as inactive if too many failures
+    private void incrementProxyFailure(ProxyEntry proxy) {
+        if (proxy == null) return;
+        
+        String proxyKey = proxy.getHost() + ":" + proxy.getPort();
+        int failures = proxyFailureCounter.getOrDefault(proxyKey, 0) + 1;
+        proxyFailureCounter.put(proxyKey, failures);
+        
+        if (failures >= MAX_FAILURES) {
+            logError("Marking proxy " + proxyKey + " as inactive after " + failures + " consecutive failures");
+            
+            String errorMessage = "Marked inactive after " + failures + " consecutive failures";
+            
+            // Update proxy entry in the list
+            proxy.setActive(false);
+            proxy.setErrorMessage(errorMessage);
+            
+            // Notify extension for UI update
+            if (extension != null) {
+                extension.notifyProxyFailure(proxy.getHost(), proxy.getPort(), errorMessage);
+            }
+            
+            proxyFailureCounter.remove(proxyKey); // Reset counter
+            
+            // Remove from connection pool
+            Queue<Socket> pool = proxyConnectionPool.remove(proxyKey);
+            if (pool != null) {
+                Socket socket;
+                while ((socket = pool.poll()) != null) {
+                    closeSocketQuietly(socket);
+                }
+            }
+        }
+    }
+
+    // Get a random proxy, optionally excluding a specific proxy
+    private ProxyEntry getRandomProxy(ProxyEntry excludeProxy) {
         proxyListLock.readLock().lock();
         try {
             if (proxyList.isEmpty()) {
@@ -506,7 +649,9 @@ public class SocksProxyService {
 
             List<ProxyEntry> activeProxies = new ArrayList<>();
             for (ProxyEntry proxy : proxyList) {
-                if (proxy.isActive()) {
+                if (proxy.isActive() && (excludeProxy == null || 
+                    !proxy.getHost().equals(excludeProxy.getHost()) || 
+                    proxy.getPort() != excludeProxy.getPort())) {
                     activeProxies.add(proxy);
                 }
             }
@@ -521,6 +666,11 @@ public class SocksProxyService {
         }
     }
     
+    // Keep the existing method for backward compatibility
+    private ProxyEntry getRandomProxy() {
+        return getRandomProxy(null);
+    }
+
     // Helper method to close socket without throwing checked exceptions
     private void closeSocketQuietly(Socket socket) {
         if (socket != null) {
@@ -545,6 +695,124 @@ public class SocksProxyService {
     private void logDebug(String message) {
         if (verboseLogging) {
             logging.logToOutput("[DEBUG] " + message);
+        }
+    }
+
+    // Start health check thread to periodically test proxies
+    private void startHealthCheckService() {
+        if (healthCheckThread != null && healthCheckThread.isAlive()) {
+            return; // Already running
+        }
+        
+        healthCheckRunning.set(true);
+        healthCheckThread = new Thread(() -> {
+            logInfo("Health check service started");
+            
+            while (healthCheckRunning.get() && serverRunning) {
+                try {
+                    // Sleep first to allow initial connections to stabilize
+                    Thread.sleep(HEALTH_CHECK_INTERVAL_MS);
+                    
+                    if (!healthCheckRunning.get() || !serverRunning) {
+                        break;
+                    }
+                    
+                    logInfo("Running periodic proxy health check");
+                    performProxyHealthCheck();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    logError("Error during health check: " + e.getMessage());
+                }
+            }
+            
+            logInfo("Health check service stopped");
+        });
+        
+        healthCheckThread.setDaemon(true);
+        healthCheckThread.start();
+    }
+    
+    // Stop health check thread
+    private void stopHealthCheckService() {
+        healthCheckRunning.set(false);
+        if (healthCheckThread != null) {
+            healthCheckThread.interrupt();
+            try {
+                healthCheckThread.join(1000); // Wait up to 1 second
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            healthCheckThread = null;
+        }
+    }
+    
+    // Perform health check on all proxies
+    private void performProxyHealthCheck() {
+        List<ProxyEntry> proxiesToCheck;
+        proxyListLock.readLock().lock();
+        try {
+            proxiesToCheck = new ArrayList<>(proxyList);
+        } finally {
+            proxyListLock.readLock().unlock();
+        }
+        
+        for (ProxyEntry proxy : proxiesToCheck) {
+            if (!serverRunning || !healthCheckRunning.get()) {
+                break; // Stop if service is shutting down
+            }
+            
+            // Test proxy
+            String proxyKey = proxy.getHost() + ":" + proxy.getPort();
+            logDebug("Health check: Testing proxy " + proxyKey);
+            
+            Socket socket = null;
+            try {
+                socket = new Socket();
+                socket.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()), connectionTimeout);
+                
+                // Try a simple SOCKS5 handshake
+                OutputStream out = socket.getOutputStream();
+                InputStream in = socket.getInputStream();
+                
+                // SOCKS5 greeting with no auth
+                out.write(new byte[]{0x05, 0x01, 0x00});
+                out.flush();
+                
+                // Read SOCKS5 response
+                byte[] response = new byte[2];
+                int bytesRead = in.read(response);
+                
+                if (bytesRead == 2 && response[0] == 0x05 && response[1] == 0x00) {
+                    logDebug("Health check: Proxy " + proxyKey + " is healthy");
+                    
+                    // If previously marked as problematic, reset its status
+                    if (proxyFailureCounter.containsKey(proxyKey)) {
+                        proxyFailureCounter.remove(proxyKey);
+                    }
+                    
+                    // If it was inactive but now works, reactivate it
+                    if (!proxy.isActive()) {
+                        proxy.setActive(true);
+                        proxy.setErrorMessage("");
+                        logInfo("Health check: Reactivated previously inactive proxy " + proxyKey);
+                        
+                        // Notify extension
+                        if (extension != null) {
+                            extension.notifyProxyReactivated(proxy.getHost(), proxy.getPort());
+                        }
+                    }
+                } else {
+                    logError("Health check: Proxy " + proxyKey + " failed handshake test");
+                    incrementProxyFailure(proxy);
+                }
+            } catch (IOException e) {
+                logError("Health check: Proxy " + proxyKey + " failed connectivity test: " + e.getMessage());
+                incrementProxyFailure(proxy);
+            } finally {
+                closeSocketQuietly(socket);
+            }
         }
     }
 } 
