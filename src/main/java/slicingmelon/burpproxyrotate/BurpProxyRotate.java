@@ -63,11 +63,11 @@ public class BurpProxyRotate implements BurpExtension {
     private static final String PORT_KEY = "localPort";
     
     // Add fields for performance settings
-    private int bufferSize = 524288; // 512KB
+    private int bufferSize = 1048576; // 1MB
     private int connectionTimeout = 10000; // 10 seconds
     private int dataTimeout = 30000; // 30 seconds
     private boolean verboseLogging = false;
-    private int maxConnections = 8092;
+    private int maxConnections = 20;
     
     // Add a map for connection pooling
     private final Map<String, Queue<Socket>> proxyConnectionPool = new ConcurrentHashMap<>();
