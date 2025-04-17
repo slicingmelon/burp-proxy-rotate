@@ -1,1 +1,3 @@
-# burp-upstream-proxy-rotate
+# Burp SOCKS Rotate Extension
+
+...
