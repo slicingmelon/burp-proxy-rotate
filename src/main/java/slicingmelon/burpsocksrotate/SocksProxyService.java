@@ -44,6 +44,8 @@ public class SocksProxyService {
     // Performance optimization - shorter timeouts for handshakes and bad proxy detection
     private static final int HANDSHAKE_TIMEOUT = 3000; // 3 second timeout for handshakes
     private static final int PARALLEL_ATTEMPTS = 2; // Try this many proxies in parallel
+    private static final int DATA_BUFFER_SIZE = 16384; // 16KB buffer size for data transfer (more efficient than 1MB)
+    private static final int MAX_IDLE_TIME = 60000; // 1 minute max idle time for connections
     
     // HTTP detection: ASCII values for common HTTP responses to detect non-SOCKS proxies
     private static final byte[] HTTP_SIGNATURE = new byte[] {'H', 'T', 'T', 'P'};
@@ -58,6 +60,9 @@ public class SocksProxyService {
     private final Map<String, Queue<Socket>> proxyConnectionPool = new ConcurrentHashMap<>();
     // Add tracking for failed proxies
     private final Map<String, Integer> proxyFailureCounter = new ConcurrentHashMap<>();
+    // Add tracking for recently failed targets to skip retries
+    private final Map<String, Long> targetFailureCache = new ConcurrentHashMap<>();
+    private static final long TARGET_FAILURE_CACHE_TTL = 60000; // 1 minute TTL
     private final int MAX_FAILURES = 3; // After this many consecutive failures, mark proxy as inactive
     private final int RETRY_ATTEMPTS = 2; // Number of different proxies to try before giving up
     
@@ -275,6 +280,15 @@ public class SocksProxyService {
                 if (verboseLogging) logDebug("Failed to read port"); return;
             }
             targetPort = ((portBytes[0] & 0xFF) << 8) | (portBytes[1] & 0xFF);
+            
+            // Check if this target has recently failed, to avoid wasting time
+            String targetKey = targetHost + ":" + targetPort;
+            Long lastFailureTime = targetFailureCache.get(targetKey);
+            if (lastFailureTime != null && System.currentTimeMillis() - lastFailureTime < TARGET_FAILURE_CACHE_TTL) {
+                if (verboseLogging) logDebug("Target " + targetKey + " recently failed, skipping retry");
+                sendSocksErrorResponse(clientOut, (byte)0x04); // Host unreachable
+                return;
+            }
 
             // RETRY LOOP: Get Upstream Proxy and establish connection with retry
             boolean connectionEstablished = false;
@@ -462,6 +476,9 @@ public class SocksProxyService {
                     clientOut.write(new byte[]{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); // Using IPv4 BND.ADDR placeholder
                     logInfo("handleSocksConnection: Successfully established proxy tunnel for " + targetHost + ":" + targetPort + ". Starting data transfer.");
                     
+                    // Clear any cached failure for this target
+                    targetFailureCache.remove(targetKey);
+                    
                     connectionEstablished = true;
                 } else {
                     // All connections failed, increment retry counter
@@ -470,7 +487,11 @@ public class SocksProxyService {
                     // If we've tried enough proxies, give up
                     if (retryCount > RETRY_ATTEMPTS) {
                         logError("handleSocksConnection: Failed to establish connection after " + retryCount + " retries");
-                        sendSocksErrorResponse(clientOut, (byte)0x01); // General server failure
+                        sendSocksErrorResponse(clientOut, (byte)0x04); // Host unreachable
+                        
+                        // Cache this failure to avoid immediate retries
+                        targetFailureCache.put(targetKey, System.currentTimeMillis());
+                        
                         return;
                     }
                 }
@@ -489,20 +510,42 @@ public class SocksProxyService {
             final InputStream finalUpstreamIn = upstreamIn;
             final OutputStream finalUpstreamOut = upstreamOut;
             
+            // Use smaller buffer for data transfer - 16KB is more efficient than 1MB for web browsing
+            final int transferBufferSize = DATA_BUFFER_SIZE;
+            
             // 1. Client -> Upstream (Background Task)
             threadPool.submit(() -> {
-                byte[] buffer1 = new byte[bufferSize];
+                byte[] buffer1 = new byte[transferBufferSize];
                 try {
                     int bytesRead;
-                    while (transferActive.get() && (bytesRead = clientIn.read(buffer1)) != -1) {
-                        if (!transferActive.get()) break; // Check again after read
-                        finalUpstreamOut.write(buffer1, 0, bytesRead);
-                        finalUpstreamOut.flush();
+                    long lastActivity = System.currentTimeMillis();
+                    
+                    while (transferActive.get() && !Thread.currentThread().isInterrupted()) {
+                        // Check for socket timeout to avoid hanging
+                        if (System.currentTimeMillis() - lastActivity > MAX_IDLE_TIME) {
+                            logDebug("Client->Upstream transfer timed out due to inactivity");
+                            break;
+                        }
+                        
+                        // Non-blocking read with timeout
+                        if (clientSocket.getInputStream().available() > 0) {
+                            bytesRead = clientIn.read(buffer1);
+                            if (bytesRead <= 0) break; // End of stream
+                            
+                            lastActivity = System.currentTimeMillis();
+                            finalUpstreamOut.write(buffer1, 0, bytesRead);
+                            finalUpstreamOut.flush();
+                        } else {
+                            // Small sleep to avoid CPU spinning
+                            Thread.sleep(5);
+                        }
                     }
                 } catch (IOException e) {
                     if (transferActive.get()) { // Log only if not intentionally stopped
                         logDebug("handleSocksConnection: Client->Upstream IO Error: " + e.getMessage());
                     }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 } finally {
                     transferActive.set(false); // Signal completion/error
                     // Gently close the write-side of the upstream socket to signal EOF
@@ -511,28 +554,60 @@ public class SocksProxyService {
                 }
             });
 
-            // 2. Upstream -> Client (Current Thread)
-            byte[] buffer2 = new byte[bufferSize];
-            try {
-                int bytesRead;
-                while (transferActive.get() && (bytesRead = finalUpstreamIn.read(buffer2)) != -1) {
-                    if (!transferActive.get()) break; // Check again after read
-                    clientOut.write(buffer2, 0, bytesRead);
-                    clientOut.flush();
+            // 2. Upstream -> Client (Background Task - Make this async too for better performance)
+            threadPool.submit(() -> {
+                byte[] buffer2 = new byte[transferBufferSize];
+                try {
+                    int bytesRead;
+                    long lastActivity = System.currentTimeMillis();
+                    
+                    while (transferActive.get() && !Thread.currentThread().isInterrupted()) {
+                        // Check for socket timeout to avoid hanging
+                        if (System.currentTimeMillis() - lastActivity > MAX_IDLE_TIME) {
+                            logDebug("Upstream->Client transfer timed out due to inactivity");
+                            break;
+                        }
+                        
+                        // Non-blocking read with timeout
+                        if (finalSocket.getInputStream().available() > 0) {
+                            bytesRead = finalUpstreamIn.read(buffer2);
+                            if (bytesRead <= 0) break; // End of stream
+                            
+                            lastActivity = System.currentTimeMillis();
+                            clientOut.write(buffer2, 0, bytesRead);
+                            clientOut.flush();
+                        } else {
+                            // Small sleep to avoid CPU spinning
+                            Thread.sleep(5);
+                        }
+                    }
+                } catch (IOException e) {
+                    if (transferActive.get()) { // Log only if not intentionally stopped
+                        logDebug("handleSocksConnection: Upstream->Client IO Error: " + e.getMessage());
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    transferActive.set(false); // Signal completion/error
+                    // Gently close the write-side of the client socket to signal EOF
+                    try { if (!clientSocket.isClosed()) clientSocket.shutdownOutput(); } catch (IOException e) { /* ignore */ }
+                    logDebug("handleSocksConnection: Upstream->Client transfer finished.");
                 }
-            } catch (IOException e) {
-                if (transferActive.get()) { // Log only if not intentionally stopped
-                    logDebug("handleSocksConnection: Upstream->Client IO Error: " + e.getMessage());
-                }
-            } finally {
-                transferActive.set(false); // Signal completion/error
-                // Gently close the write-side of the client socket to signal EOF
-                try { if (!clientSocket.isClosed()) clientSocket.shutdownOutput(); } catch (IOException e) { /* ignore */ }
-                logDebug("handleSocksConnection: Upstream->Client transfer finished.");
-            }
+            });
 
-            // Wait briefly for the background task to potentially finish signalling
-            try { Thread.sleep(50); } catch (InterruptedException ignored) {} 
+            // Wait for both transfers to complete or timeout
+            try {
+                // Give the transfers some time to start and potentially complete
+                long deadline = System.currentTimeMillis() + 30000; // 30 second max wait
+                while (transferActive.get() && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(100); // Check status every 100ms
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                // Force transferActive to false to ensure both transfer threads exit
+                transferActive.set(false);
+            }
 
             // Now that both loops have exited (or errored), try to return the upstream connection
             returnProxyConnection(proxy, finalSocket);
@@ -777,10 +852,26 @@ public class SocksProxyService {
 
             List<ProxyEntry> activeProxies = new ArrayList<>();
             for (ProxyEntry proxy : proxyList) {
-                if (proxy.isActive() && (excludeProxy == null || 
+                // Skip proxies that are known to be problematic (have more than 1 failure)
+                String proxyKey = proxy.getHost() + ":" + proxy.getPort();
+                int failures = proxyFailureCounter.getOrDefault(proxyKey, 0);
+                
+                if (proxy.isActive() && failures < 2 && 
+                    (excludeProxy == null || 
                     !proxy.getHost().equals(excludeProxy.getHost()) || 
                     proxy.getPort() != excludeProxy.getPort())) {
                     activeProxies.add(proxy);
+                }
+            }
+
+            if (activeProxies.isEmpty()) {
+                // If we have no proxies with fewer than 2 failures, try using any active proxy
+                for (ProxyEntry proxy : proxyList) {
+                    if (proxy.isActive() && (excludeProxy == null || 
+                        !proxy.getHost().equals(excludeProxy.getHost()) || 
+                        proxy.getPort() != excludeProxy.getPort())) {
+                        activeProxies.add(proxy);
+                    }
                 }
             }
 
@@ -877,8 +968,19 @@ public class SocksProxyService {
         }
     }
     
+    // Clean up expired entries in the target failure cache
+    private void cleanupTargetFailureCache() {
+        if (targetFailureCache.isEmpty()) return;
+        
+        long now = System.currentTimeMillis();
+        targetFailureCache.entrySet().removeIf(entry -> now - entry.getValue() > TARGET_FAILURE_CACHE_TTL);
+    }
+    
     // Perform health check on all proxies
     private void performProxyHealthCheck() {
+        // Clean up expired target failures first
+        cleanupTargetFailureCache();
+        
         List<ProxyEntry> proxiesToCheck;
         proxyListLock.readLock().lock();
         try {

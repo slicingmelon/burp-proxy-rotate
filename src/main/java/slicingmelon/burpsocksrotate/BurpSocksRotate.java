@@ -38,6 +38,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.concurrent.Future;
 
 public class BurpSocksRotate implements BurpExtension {
     
@@ -747,74 +748,6 @@ public class BurpSocksRotate implements BurpExtension {
         proxyTable.setAutoCreateRowSorter(true);
     }
     
-    private boolean validateProxy(ProxyEntry proxy, int maxAttempts) {
-        logMessage("Validating proxy: " + proxy.getHost() + ":" + proxy.getPort() + " (attempts left: " + maxAttempts + ")");
-        proxy.setErrorMessage("Validating..."); // Indicate validation in progress
-         updateProxyTable(); // Show "Validating..." status
-
-        boolean success = false;
-        String finalErrorMessage = "Validation failed"; // Default error
-
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-             Socket socket = null;
-            try {
-                socket = new Socket();
-                socket.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()), 5000); // 5 second connection timeout
-                socket.setSoTimeout(5000); // 5 second read timeout
-
-                OutputStream out = socket.getOutputStream();
-                InputStream in = socket.getInputStream();
-                
-                // Send SOCKS5 greeting (No Auth)
-                out.write(new byte[]{0x05, 0x01, 0x00});
-                out.flush();
-                
-                // Read SOCKS5 response
-                byte[] response = new byte[2];
-                int bytesRead = in.read(response);
-                
-                if (bytesRead == 2 && response[0] == 0x05 && response[1] == 0x00) {
-                    logMessage("Proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
-                    success = true;
-                    finalErrorMessage = ""; // Clear error on success
-                    break; // Exit loop on success
-                } else {
-                    finalErrorMessage = "Invalid SOCKS response (Bytes: " + bytesRead + ", Resp: " + (bytesRead>0 ? response[0]:"N/A") + "," + (bytesRead>1 ? response[1]:"N/A") + ")";
-                    logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
-                }
-            } catch (IOException e) {
-                 finalErrorMessage = e.getMessage();
-                 if (finalErrorMessage == null || finalErrorMessage.isEmpty()) {
-                     finalErrorMessage = e.getClass().getSimpleName(); // Use exception type if message is null
-                 }
-                 logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
-            } finally {
-                if (socket != null) {
-                    try { socket.close(); } catch (IOException e) { /* ignore */ }
-                }
-            }
-            
-            // Wait before retrying if not the last attempt and not successful
-            if (!success && attempt < maxAttempts) {
-                try {
-                    Thread.sleep(1000); // 1 second delay
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    finalErrorMessage = "Validation interrupted";
-                    logMessage("Validation interrupted for " + proxy.getHost() + ":" + proxy.getPort());
-                    break; // Exit loop if interrupted
-                }
-            }
-        }
-
-        // Update final status outside the loop
-        proxy.setActive(success);
-        proxy.setErrorMessage(finalErrorMessage);
-        updateProxyTable(); // Update UI with final status
-
-        return success;
-    }
-    
     private void validateAllProxies() {
         List<ProxyEntry> proxiesToValidate;
         proxyListLock.readLock().lock();
@@ -835,16 +768,56 @@ public class BurpSocksRotate implements BurpExtension {
         new Thread(() -> {
             int total = proxiesToValidate.size();
             final AtomicInteger activeCount = new AtomicInteger(0);
+            final AtomicInteger completedCount = new AtomicInteger(0);
             
             logMessage("Starting validation for " + total + " proxies...");
-
-            proxiesToValidate.forEach(proxy -> {
-                 if (validateProxy(proxy, 3)) { // Validate each proxy from the copied list
-                     activeCount.incrementAndGet();
-                 }
-                 updateProxyTable(); // Update UI after each validation
-            });
-
+            
+            // Create a thread pool for parallel validation
+            int parallelism = Math.min(10, Runtime.getRuntime().availableProcessors());
+            ExecutorService validationPool = Executors.newFixedThreadPool(parallelism);
+            
+            // Submit validation tasks
+            List<Future<?>> futures = new ArrayList<>();
+            for (ProxyEntry proxy : proxiesToValidate) {
+                futures.add(validationPool.submit(() -> {
+                    try {
+                        if (validateProxy(proxy, 2)) { // Reduced to 2 attempts for faster validation
+                            activeCount.incrementAndGet();
+                        }
+                        // Update UI after each validation
+                        updateProxyTable();
+                        // Update progress
+                        int completed = completedCount.incrementAndGet();
+                        if (completed % 5 == 0 || completed == total) {
+                            logMessage(String.format("Proxy validation progress: %d/%d completed", completed, total));
+                        }
+                    } catch (Exception e) {
+                        logMessage("Error validating proxy " + proxy.getHost() + ":" + proxy.getPort() + " - " + e.getMessage());
+                        proxy.setActive(false);
+                        proxy.setErrorMessage("Validation error: " + e.getMessage());
+                        updateProxyTable();
+                        completedCount.incrementAndGet();
+                    }
+                }));
+            }
+            
+            // Wait for all validations to complete
+            for (Future<?> future : futures) {
+                try {
+                    future.get();
+                } catch (Exception e) {
+                    logMessage("Error waiting for validation: " + e.getMessage());
+                }
+            }
+            
+            // Shutdown the thread pool
+            validationPool.shutdown();
+            try {
+                validationPool.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            
             logMessage("Validation complete.");
             SwingUtilities.invokeLater(() -> {
                 JOptionPane.showMessageDialog(null, 
@@ -854,7 +827,80 @@ public class BurpSocksRotate implements BurpExtension {
             });
         }).start();
     }
+    
+    private boolean validateProxy(ProxyEntry proxy, int maxAttempts) {
+        logMessage("Validating proxy: " + proxy.getHost() + ":" + proxy.getPort());
+        proxy.setErrorMessage("Validating..."); // Indicate validation in progress
+        updateProxyTable(); // Show "Validating..." status
 
+        boolean success = false;
+        String finalErrorMessage = "Validation failed"; // Default error
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            Socket socket = null;
+            try {
+                socket = new Socket();
+                // Reduced timeout for faster validation (3 seconds is sufficient)
+                socket.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()), 3000);
+                socket.setSoTimeout(3000);
+
+                OutputStream out = socket.getOutputStream();
+                InputStream in = socket.getInputStream();
+                
+                // Send SOCKS5 greeting (No Auth)
+                out.write(new byte[]{0x05, 0x01, 0x00});
+                out.flush();
+                
+                // Read SOCKS5 response
+                byte[] response = new byte[2];
+                int bytesRead = in.read(response);
+                
+                if (bytesRead == 2 && response[0] == 0x05 && response[1] == 0x00) {
+                    logMessage("Proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
+                    success = true;
+                    finalErrorMessage = ""; // Clear error on success
+                    break; // Exit loop on success
+                } else if (bytesRead > 0 && response[0] == 'H') { // Detect HTTP responses
+                    finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
+                    logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + " - " + finalErrorMessage);
+                    break; // No need to retry if it's an HTTP server
+                } else {
+                    finalErrorMessage = "Invalid SOCKS response (Bytes: " + bytesRead + ", Resp: " + (bytesRead>0 ? response[0]:"N/A") + "," + (bytesRead>1 ? response[1]:"N/A") + ")";
+                    logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+                }
+            } catch (IOException e) {
+                finalErrorMessage = e.getMessage();
+                if (finalErrorMessage == null || finalErrorMessage.isEmpty()) {
+                    finalErrorMessage = e.getClass().getSimpleName(); // Use exception type if message is null
+                }
+                logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+            } finally {
+                if (socket != null) {
+                    try { socket.close(); } catch (IOException e) { /* ignore */ }
+                }
+            }
+            
+            // Wait before retrying if not the last attempt and not successful
+            if (!success && attempt < maxAttempts) {
+                try {
+                    Thread.sleep(500); // Reduced delay between attempts
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    finalErrorMessage = "Validation interrupted";
+                    logMessage("Validation interrupted for " + proxy.getHost() + ":" + proxy.getPort());
+                    break; // Exit loop if interrupted
+                }
+            }
+        }
+
+        // Update final status outside the loop
+        proxy.setActive(success);
+        proxy.setErrorMessage(finalErrorMessage);
+        updateProxyTable(); // Update UI with final status
+
+        return success;
+    }
+    
     private void registerContextMenu() {
         api.userInterface().registerContextMenuItemsProvider(new ContextMenuItemsProvider() {
             @Override
