@@ -3,7 +3,7 @@
  * 
  * This extension routes each HTTP request through a different SOCKS proxy from a provided list.
  */
-package slicingmelon.burpproxyrotate;
+package slicingmelon.burpsocksrorate;
 
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.Queue;
 
-public class BurpProxyRotate implements BurpExtension {
+public class BurpSocksRotate implements BurpExtension {
     
     private MontoyaApi api;
     private List<ProxyEntry> proxyList;
