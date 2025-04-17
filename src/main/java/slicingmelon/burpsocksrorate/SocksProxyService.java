@@ -243,17 +243,25 @@ public class SocksProxyService {
             // Get Upstream Proxy
             ProxyEntry proxy = getRandomProxy();
             if (proxy == null) {
-                logError("No active proxies available");
+                logError("handleSocksConnection: No active proxies available. Closing client connection.");
                 // TODO: Send SOCKS error response to client? (e.g., Host unreachable)
                 return;
             }
 
-            if (verboseLogging) {
-                logDebug("Routing " + targetHost + ":" + targetPort + " via " + proxy.getHost() + ":" + proxy.getPort());
-            }
+            logInfo("handleSocksConnection: Routing " + targetHost + ":" + targetPort + " via " + proxy.getHost() + ":" + proxy.getPort());
 
             // Connect to Upstream Proxy
-            upstreamSocket = getProxyConnection(proxy); // Throws IOException on failure
+            try {
+                upstreamSocket = getProxyConnection(proxy); // Throws IOException on failure
+                logInfo("handleSocksConnection: Successfully connected to upstream proxy: " + proxy.getHost() + ":" + proxy.getPort());
+            } catch (IOException e) {
+                logError("handleSocksConnection: Failed to connect to upstream proxy " + proxy.getHost() + ":" + proxy.getPort() + ": " + e.getMessage());
+                // Mark proxy as potentially bad?
+                // proxy.setActive(false); // Consider adding logic to disable failing proxies temporarily
+                // proxy.setErrorMessage("Connection failed: " + e.getMessage());
+                // updateProxyListCallback.run(); // Need a way to signal UI update if proxy status changes
+                return; // Cannot proceed without upstream connection
+            }
             InputStream upstreamIn = upstreamSocket.getInputStream();
             OutputStream upstreamOut = upstreamSocket.getOutputStream();
 
@@ -261,7 +269,7 @@ public class SocksProxyService {
             upstreamOut.write(new byte[]{0x05, 0x01, 0x00});
             read = upstreamIn.read(buffer, 0, 2);
             if (read != 2 || buffer[0] != 0x05 || buffer[1] != 0x00) {
-                if (verboseLogging) logDebug("Upstream proxy handshake failed");
+                logError("handleSocksConnection: Upstream proxy handshake failed with " + proxy.getHost() + ":" + proxy.getPort() + ". Read=" + read + ", Resp="+(read > 0 ? buffer[0]:"N/A") + ","+(read > 1 ? buffer[1]:"N/A"));
                 // Mark proxy as potentially bad?
                 closeSocketQuietly(upstreamSocket); // Close upstream before returning
                 upstreamSocket = null;
@@ -283,8 +291,8 @@ public class SocksProxyService {
             // Read Upstream Response
             read = upstreamIn.read(buffer, 0, 4); // VER, REP, RSV, ATYP
             if (read != 4 || buffer[0] != 0x05 || buffer[1] != 0x00) { // Check for success reply (0x00)
-                if (verboseLogging) logDebug("Upstream proxy connection failed (Reply: " + (read < 2 ? "N/A" : buffer[1]) + ")");
-                 // Mark proxy as potentially bad?
+                logError("handleSocksConnection: Upstream proxy refused connection to target " + targetHost + ":" + targetPort + ". Proxy=" + proxy.getHost() + ":" + proxy.getPort() + ", Read=" + read + ", ReplyCode=" + (read > 1 ? buffer[1] : "N/A"));
+                // Mark proxy as potentially bad?
                 closeSocketQuietly(upstreamSocket);
                 upstreamSocket = null;
                 // TODO: Send appropriate SOCKS error back to client based on buffer[1]
@@ -306,16 +314,66 @@ public class SocksProxyService {
 
             // Send Success Response to Client
             clientOut.write(new byte[]{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); // Using IPv4 BND.ADDR placeholder
+            logInfo("handleSocksConnection: Successfully established proxy tunnel for " + targetHost + ":" + targetPort + ". Starting data transfer.");
 
-            // Start Bidirectional Data Transfer
-            transferData(clientIn, upstreamOut, clientSocket, upstreamSocket);
+            // === Refactored Data Transfer ===
+            AtomicBoolean transferActive = new AtomicBoolean(true);
+            Socket finalUpstreamSocket = upstreamSocket; // Final variable for lambda
+            
+            // 1. Client -> Upstream (Background Task)
+            threadPool.submit(() -> {
+                byte[] buffer1 = new byte[bufferSize];
+                try {
+                    int bytesRead;
+                    while (transferActive.get() && (bytesRead = clientIn.read(buffer1)) != -1) {
+                        if (!transferActive.get()) break; // Check again after read
+                        upstreamOut.write(buffer1, 0, bytesRead);
+                        upstreamOut.flush();
+                    }
+                } catch (IOException e) {
+                    if (transferActive.get()) { // Log only if not intentionally stopped
+                        logDebug("handleSocksConnection: Client->Upstream IO Error: " + e.getMessage());
+                    }
+                } finally {
+                    transferActive.set(false); // Signal completion/error
+                    // Gently close the write-side of the upstream socket to signal EOF
+                    try { if (!finalUpstreamSocket.isClosed()) finalUpstreamSocket.shutdownOutput(); } catch (IOException e) { /* ignore */ }
+                    logDebug("handleSocksConnection: Client->Upstream transfer finished.");
+                }
+            });
 
-            // If transferData completes normally, try to return the upstream connection
+            // 2. Upstream -> Client (Current Thread)
+            byte[] buffer2 = new byte[bufferSize];
+            try {
+                int bytesRead;
+                while (transferActive.get() && (bytesRead = upstreamIn.read(buffer2)) != -1) {
+                    if (!transferActive.get()) break; // Check again after read
+                    clientOut.write(buffer2, 0, bytesRead);
+                    clientOut.flush();
+                }
+            } catch (IOException e) {
+                if (transferActive.get()) { // Log only if not intentionally stopped
+                    logDebug("handleSocksConnection: Upstream->Client IO Error: " + e.getMessage());
+                }
+            } finally {
+                transferActive.set(false); // Signal completion/error
+                // Gently close the write-side of the client socket to signal EOF
+                try { if (!clientSocket.isClosed()) clientSocket.shutdownOutput(); } catch (IOException e) { /* ignore */ }
+                logDebug("handleSocksConnection: Upstream->Client transfer finished.");
+            }
+
+            // Wait briefly for the background task to potentially finish signalling
+            // This isn't perfect synchronization but avoids busy-waiting indefinitely
+            // Proper synchronization would involve Futures or CountDownLatches if needed.
+            try { Thread.sleep(50); } catch (InterruptedException ignored) {} 
+
+            // Now that both loops have exited (or errored), try to return the upstream connection
             returnProxyConnection(proxy, upstreamSocket);
             upstreamSocket = null; // Mark as returned/handled
+            // Client socket is closed in the outer finally block
 
         } catch (IOException e) {
-            logError("Error handling SOCKS connection for client " + clientSocket.getRemoteSocketAddress() + ": " + e.getMessage());
+            logError("handleSocksConnection: IO Error during connection setup/transfer for client " + clientSocket.getRemoteSocketAddress() + ": " + e.getMessage());
             // Close upstream if it wasn't returned/closed yet
             closeSocketQuietly(upstreamSocket);
             // Send SOCKS error to client? (e.g., general server failure)
@@ -327,62 +385,6 @@ public class SocksProxyService {
              }
         }
     }
-    
-    // Helper for bidirectional data transfer
-    private void transferData(InputStream in1, OutputStream out1, Socket sock1, Socket sock2) {
-        ExecutorService transferExecutor = Executors.newFixedThreadPool(2);
-        AtomicBoolean transferComplete = new AtomicBoolean(false);
-        byte[] buffer1 = new byte[bufferSize];
-        byte[] buffer2 = new byte[bufferSize];
-
-        Runnable transfer1to2 = () -> {
-            try {
-                int bytesRead;
-                while (!transferComplete.get() && (bytesRead = in1.read(buffer1)) != -1) {
-                    out1.write(buffer1, 0, bytesRead);
-                    out1.flush();
-                }
-            } catch (IOException e) {
-                 if(serverRunning && !sock1.isClosed() && !sock2.isClosed()) { // Avoid logging errors during shutdown or normal closure
-                    //logDebug("Transfer 1->2 error: " + e.getMessage());
-                 }
-            } finally {
-                transferComplete.set(true);
-                closeSocketQuietly(sock1); // Close associated sockets on completion/error
-                closeSocketQuietly(sock2);
-            }
-        };
-
-        Runnable transfer2to1 = () -> {
-             try {
-                 int bytesRead;
-                 InputStream in2 = sock2.getInputStream(); // Get input stream for socket 2
-                 OutputStream out2 = sock1.getOutputStream(); // Get output stream for socket 1
-                 while (!transferComplete.get() && (bytesRead = in2.read(buffer2)) != -1) {
-                     out2.write(buffer2, 0, bytesRead);
-                     out2.flush();
-                 }
-             } catch (IOException e) {
-                  if(serverRunning && !sock1.isClosed() && !sock2.isClosed()) {
-                     //logDebug("Transfer 2->1 error: " + e.getMessage());
-                  }
-             } finally {
-                 transferComplete.set(true);
-                 closeSocketQuietly(sock1);
-                 closeSocketQuietly(sock2);
-             }
-         };
-
-        transferExecutor.submit(transfer1to2);
-        transferExecutor.submit(transfer2to1);
-        transferExecutor.shutdown(); // Allow submitted tasks to complete
-
-         // Wait for transfer to complete (or timeout) - This might block the handler thread
-         // Consider if this blocking is acceptable or if the handler should return earlier.
-         // For simplicity, we'll let it block here. The transferComplete flag and socket closing
-         // should eventually terminate the loops.
-    }
-
 
     // Initialize connection pool
     private void initializeConnectionPool() {
