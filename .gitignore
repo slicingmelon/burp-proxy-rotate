@@ -1,4 +1,8 @@
 .gradle
 .idea
 .vscode
+build/classes
+build/generated
+build/tmp
+bin
 
