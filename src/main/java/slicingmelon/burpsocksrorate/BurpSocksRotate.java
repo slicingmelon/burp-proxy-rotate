@@ -37,6 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 public class BurpSocksRotate implements BurpExtension {
     
@@ -465,36 +466,49 @@ public class BurpSocksRotate implements BurpExtension {
             return;
         }
         
-        // Start the proxy service
+        // Define callbacks for success and failure
+        Runnable onSuccessCallback = () -> {
+            // Run UI updates on the Event Dispatch Thread (EDT)
+            SwingUtilities.invokeLater(() -> {
+                updateServerButtons(); // Update button states
+                JOptionPane.showMessageDialog(null,
+                    "SOCKS Proxy Rotator started on localhost:" + portToUse + "\n\n" +
+                    "To use it:\n" +
+                    "1. Go to Burp Settings > Network > Connections > SOCKS Proxy\n" +
+                    "2. Check 'Use SOCKS proxy'\n" +
+                    "3. Set Host to 'localhost' and Port to '" + portToUse + "'\n\n" +
+                    "The rotator will route each request through a different active SOCKS proxy from your list.",
+                    "Proxy Server Started",
+                    JOptionPane.INFORMATION_MESSAGE);
+            });
+        };
+
+        Consumer<String> onFailureCallback = (errorMessage) -> {
+            // Run UI updates on the Event Dispatch Thread (EDT)
+            SwingUtilities.invokeLater(() -> {
+                logMessage("Proxy service failed to start: " + errorMessage);
+                JOptionPane.showMessageDialog(null, 
+                    "Failed to start proxy server: " + errorMessage,
+                    "Server Error", 
+                    JOptionPane.ERROR_MESSAGE);
+                updateServerButtons(); // Ensure buttons reflect stopped state
+            });
+        };
+
+        // Start the proxy service with callbacks
         try {
-            socksProxyService.start(portToUse);
-            updateServerButtons(); // Update UI after attempting start
-
-             // Show configuration notice only if start was successful (check isRunning)
-             if (socksProxyService.isRunning()) {
-                 JOptionPane.showMessageDialog(null,
-                     "SOCKS Proxy Rotator started on localhost:" + portToUse + "\n\n" +
-                     "To use it:\n" +
-                     "1. Go to Burp Settings > Network > Connections > SOCKS Proxy\n" +
-                     "2. Check 'Use SOCKS proxy'\n" +
-                     "3. Set Host to 'localhost' and Port to '" + portToUse + "'\n\n" +
-                     "The rotator will route each request through a different active SOCKS proxy from your list.",
-                     "Proxy Server Started",
-                     JOptionPane.INFORMATION_MESSAGE);
-             } else {
-                 // Service might have failed to start (e.g., port already in use), error logged by service
-                 logMessage("Proxy service failed to start. Check logs for details.");
-                 // Optionally show a simpler error message here too
-             }
+            logMessage("Attempting to start SOCKS proxy service on port " + portToUse + "...");
+            socksProxyService.start(portToUse, onSuccessCallback, onFailureCallback);
+            // Remove immediate UI updates and checks from here - they are now handled by callbacks
         } catch (Exception ex) {
-             logMessage("Unexpected error starting proxy service: " + ex.getMessage());
-             JOptionPane.showMessageDialog(null,
-                 "An unexpected error occurred trying to start the proxy service: " + ex.getMessage(),
-                 "Start Error",
-                 JOptionPane.ERROR_MESSAGE);
-             updateServerButtons(); // Ensure buttons reflect stopped state on error
+            // Catch any immediate exceptions from the start() call itself (e.g., invalid arguments)
+            logMessage("Unexpected error trying to initiate proxy service start: " + ex.getMessage());
+            JOptionPane.showMessageDialog(null,
+                "An unexpected error occurred trying to start the proxy service: " + ex.getMessage(),
+                "Start Error",
+                JOptionPane.ERROR_MESSAGE);
+            updateServerButtons(); // Ensure buttons reflect stopped state on immediate error
         }
-
     }
     
     private void stopProxyServer() {

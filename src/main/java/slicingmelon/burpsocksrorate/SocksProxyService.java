@@ -20,6 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReadWriteLock;
+import java.util.function.Consumer;
 
 public class SocksProxyService {
 
@@ -68,7 +69,7 @@ public class SocksProxyService {
         return localPort;
     }
 
-    public void start(int port) {
+    public void start(int port, Runnable onSuccess, Consumer<String> onFailure) {
         if (serverRunning) {
             logInfo("Server is already running.");
             return;
@@ -88,6 +89,9 @@ public class SocksProxyService {
                 serverRunning = true;
 
                 logInfo("SOCKS Proxy Rotator server started on localhost:" + localPort);
+                // Invoke success callback on the calling thread's context (likely EDT if called from UI action)
+                // Or consider if callbacks should always run via SwingUtilities.invokeLater
+                onSuccess.run(); 
 
                 while (serverRunning && !serverSocket.isClosed()) {
                     try {
@@ -103,16 +107,14 @@ public class SocksProxyService {
                 }
             } catch (IOException e) {
                 logError("Error starting server: " + e.getMessage());
-                SwingUtilities.invokeLater(() -> 
-                    JOptionPane.showMessageDialog(null,
-                        "Failed to start proxy server: " + e.getMessage(),
-                        "Server Error",
-                        JOptionPane.ERROR_MESSAGE)
-                );
                 serverRunning = false;
-                // Consider adding a callback or event to notify the UI about the state change
+                // Invoke failure callback with the error message
+                onFailure.accept(e.getMessage()); 
+                // Removed JOptionPane call from here
             } finally {
-                 serverRunning = false; // Ensure state is updated if loop exits unexpectedly
+                 if (serverRunning) { // If it was running but the loop exited (e.g., closed externally)
+                     serverRunning = false;
+                 }
                  logInfo("Server thread finished.");
             }
         });
