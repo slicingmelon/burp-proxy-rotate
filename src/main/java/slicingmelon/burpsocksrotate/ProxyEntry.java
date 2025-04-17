@@ -1,4 +1,4 @@
-package slicingmelon.burpsocksrorate;
+package slicingmelon.burpsocksrotate;
 
 public class ProxyEntry {
     private final String host;

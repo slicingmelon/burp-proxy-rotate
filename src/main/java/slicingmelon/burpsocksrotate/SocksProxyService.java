@@ -1,4 +1,4 @@
-package slicingmelon.burpsocksrorate;
+package slicingmelon.burpsocksrotate;
 
 import burp.api.montoya.logging.Logging;
 
