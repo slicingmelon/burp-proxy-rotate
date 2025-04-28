@@ -7,18 +7,18 @@ A high-performance Burp Suite extension that routes HTTP/HTTPS requests through 
 - Randomly selects a different SOCKS proxy for each connection
 - Supports both SOCKS4 and SOCKS5 protocols
 - Full IPv4 and IPv6 support
-- Connection pooling for improved performance
+- Optimized for reliable performance
 - TCP optimizations for faster data transfer
 - Manual proxy validation
 - Simple UI for managing proxy list
 
 ## Performance Optimizations
 
-- Connection pooling: Reuses proxy connections for better performance
 - Larger buffer sizes (32KB) for efficient data transfer
-- Extended timeouts to handle slow connections
+- Extended timeouts to handle slow networks and high-latency proxies
 - TCP_NODELAY setting to disable Nagle's algorithm
 - Proxies are only invalidated through manual health checks
+- Improved error reporting for better diagnostics
 
 ## How to Use
 
@@ -42,9 +42,8 @@ The extension consists of three main classes:
 
 For each incoming connection:
 1. The SocksProxyService accepts the connection
-2. It randomly selects an active proxy from the list (or reuses a pooled connection)
+2. It randomly selects an active proxy from the list
 3. It connects to the target via the selected proxy
 4. It relays traffic bidirectionally with optimized buffers
-5. When done, it returns the connection to the pool for reuse
 
 If a connection fails, it automatically tries another proxy.
