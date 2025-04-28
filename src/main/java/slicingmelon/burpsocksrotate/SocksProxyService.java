@@ -10,7 +10,11 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Queue;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -21,11 +25,12 @@ import java.util.function.Consumer;
  * For each new connection, a different active SOCKS proxy is chosen.
  */
 public class SocksProxyService {
-    // Core settings
-    private static final int BUFFER_SIZE = 8192;
-    private static final int CONNECTION_TIMEOUT = 10000; // 10 seconds
-    private static final int SOCKET_TIMEOUT = 30000; // 30 seconds
+    // Core settings - increased for better performance
+    private static final int BUFFER_SIZE = 32768; // Increased buffer size (32KB)
+    private static final int CONNECTION_TIMEOUT = 30000; // 30 seconds
+    private static final int SOCKET_TIMEOUT = 60000; // 60 seconds
     private static final int MAX_RETRY_COUNT = 2; // Number of proxies to try before giving up
+    private static final int MAX_CONNECTIONS_PER_PROXY = 10; // Maximum pooled connections per proxy
 
     // Dependencies
     private final Logging logging;
@@ -39,11 +44,16 @@ public class SocksProxyService {
     private ExecutorService threadPool;
     private volatile boolean serverRunning = false;
     private int localPort;
+
+    // Connection pooling support
+    private final Map<String, Queue<Socket>> connectionPool = new ConcurrentHashMap<>();
     
     // Reference to main extension for UI callbacks
     private BurpSocksRotate extension;
 
-    // Update constructor to match the call from BurpSocksRotate.java
+    /**
+     * Creates a new SocksProxyService.
+     */
     public SocksProxyService(List<ProxyEntry> proxyList, ReadWriteLock proxyListLock, Logging logging) {
         this.proxyList = proxyList;
         this.proxyListLock = proxyListLock;
@@ -83,7 +93,10 @@ public class SocksProxyService {
         this.localPort = port;
         
         // Create a thread pool with a reasonable number of threads
-        threadPool = Executors.newFixedThreadPool(20);
+        threadPool = Executors.newFixedThreadPool(50); // Increased thread pool size
+
+        // Initialize connection pool
+        initializeConnectionPool();
 
         serverThread = new Thread(() -> {
             try {
@@ -119,6 +132,24 @@ public class SocksProxyService {
     }
 
     /**
+     * Initializes the connection pool.
+     */
+    private void initializeConnectionPool() {
+        connectionPool.clear();
+        proxyListLock.readLock().lock();
+        try {
+            for (ProxyEntry proxy : proxyList) {
+                if (proxy.isActive()) {
+                    String key = proxy.getHost() + ":" + proxy.getPort();
+                    connectionPool.put(key, new ConcurrentLinkedQueue<>());
+                }
+            }
+        } finally {
+            proxyListLock.readLock().unlock();
+        }
+    }
+
+    /**
      * Stops the SOCKS proxy rotation service.
      */
     public void stop() {
@@ -143,6 +174,9 @@ public class SocksProxyService {
             logInfo("Thread pool shut down.");
         }
 
+        // Close all pooled connections
+        closeAllPooledConnections();
+
         if (serverThread != null && serverThread.isAlive()) {
             try {
                 serverThread.join(1000);
@@ -156,6 +190,18 @@ public class SocksProxyService {
         serverThread = null;
 
         logInfo("SOCKS Proxy Rotator server stopped.");
+    }
+
+    /**
+     * Closes all connections in the pool.
+     */
+    private void closeAllPooledConnections() {
+        for (Queue<Socket> queue : connectionPool.values()) {
+            Socket socket;
+            while ((socket = queue.poll()) != null) {
+                closeSocketQuietly(socket);
+            }
+        }
     }
 
     /**
@@ -339,36 +385,79 @@ public class SocksProxyService {
                 return;
             }
             
-            logInfo("Selected proxy: " + proxy.getHost() + ":" + proxy.getPort() + 
+            String proxyKey = proxy.getHost() + ":" + proxy.getPort();
+            logInfo("Selected proxy: " + proxyKey + 
                     " for target: " + targetHost + ":" + targetPort + 
                     (attempt > 0 ? " (attempt " + (attempt + 1) + ")" : ""));
             
             Socket proxySocket = null;
+            boolean isFromPool = false;
             
             try {
-                // Connect to the proxy
-                proxySocket = new Socket();
-                proxySocket.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()), CONNECTION_TIMEOUT);
-                proxySocket.setSoTimeout(SOCKET_TIMEOUT);
+                // Try to get a connection from the pool first
+                Queue<Socket> proxyPool = connectionPool.get(proxyKey);
+                if (proxyPool != null) {
+                    while ((proxySocket = proxyPool.poll()) != null) {
+                        // Check if the socket is still valid
+                        if (!proxySocket.isClosed() && proxySocket.isConnected() && 
+                            !proxySocket.isInputShutdown() && !proxySocket.isOutputShutdown()) {
+                            try {
+                                // Quick test to see if socket is still alive
+                                proxySocket.setSoTimeout(500);
+                                if (proxySocket.getInputStream().available() >= 0) {
+                                    // Socket seems good
+                                    proxySocket.setSoTimeout(SOCKET_TIMEOUT);
+                                    isFromPool = true;
+                                    break;
+                                }
+                            } catch (IOException e) {
+                                // Socket is bad, close it and continue
+                                closeSocketQuietly(proxySocket);
+                                proxySocket = null;
+                            }
+                        } else {
+                            // Socket is invalid, close it and continue
+                            closeSocketQuietly(proxySocket);
+                            proxySocket = null;
+                        }
+                    }
+                }
+                
+                // If no valid socket from pool, create a new one
+                if (proxySocket == null) {
+                    proxySocket = new Socket();
+                    proxySocket.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()), CONNECTION_TIMEOUT);
+                    proxySocket.setSoTimeout(SOCKET_TIMEOUT);
+                    proxySocket.setTcpNoDelay(true); // Disable Nagle's algorithm
+                    proxySocket.setReceiveBufferSize(BUFFER_SIZE);
+                    proxySocket.setSendBufferSize(BUFFER_SIZE);
+                }
                 
                 InputStream proxyIn = proxySocket.getInputStream();
                 OutputStream proxyOut = proxySocket.getOutputStream();
                 
-                if (socksVersion == 5) {
-                    // SOCKS5 to proxy
-                    
-                    // Send greeting
-                    proxyOut.write(new byte[] {5, 1, 0}); // Version, 1 method, No auth
-                    proxyOut.flush();
-                    
-                    // Read response
-                    byte[] response = new byte[2];
-                    int read = proxyIn.read(response);
-                    
-                    if (read != 2 || response[0] != 5 || response[1] != 0) {
-                        throw new IOException("Proxy authentication failed or not a SOCKS5 proxy");
+                // If from pool, we need to establish a new SOCKS session
+                // Otherwise do SOCKS handshake for a fresh connection
+                if (!isFromPool) {
+                    if (socksVersion == 5) {
+                        // SOCKS5 to proxy
+                        
+                        // Send greeting
+                        proxyOut.write(new byte[] {5, 1, 0}); // Version, 1 method, No auth
+                        proxyOut.flush();
+                        
+                        // Read response
+                        byte[] response = new byte[2];
+                        int read = proxyIn.read(response);
+                        
+                        if (read != 2 || response[0] != 5 || response[1] != 0) {
+                            throw new IOException("Proxy authentication failed or not a SOCKS5 proxy");
+                        }
                     }
-                    
+                }
+                
+                // Always send the connection request even for pooled connections
+                if (socksVersion == 5) {
                     // Send connection request to proxy
                     byte[] request;
                     
@@ -432,7 +521,7 @@ public class SocksProxyService {
                     
                     // Read response
                     byte[] connResponse = new byte[4];
-                    read = proxyIn.read(connResponse);
+                    int read = proxyIn.read(connResponse);
                     
                     if (read != 4 || connResponse[0] != 5 || connResponse[1] != 0) {
                         throw new IOException("Connection request failed: " + (read > 1 ? connResponse[1] : "unknown error"));
@@ -511,7 +600,7 @@ public class SocksProxyService {
                 }
                 
                 // Start bidirectional relay
-                relay(clientSocket, proxySocket);
+                relay(clientSocket, proxySocket, proxy);
                 
                 // Connection succeeded, exit retry loop
                 return;
@@ -520,10 +609,7 @@ public class SocksProxyService {
                 logError("Connection through proxy " + proxy.getHost() + ":" + proxy.getPort() + 
                          " failed: " + e.getMessage());
                 
-                // Mark proxy as inactive if it failed
-                if (extension != null) {
-                    extension.notifyProxyFailure(proxy.getHost(), proxy.getPort(), e.getMessage());
-                }
+                // Don't mark proxy as inactive here - only manual validation should do this
                 
                 // Close this proxy socket and try another
                 closeSocketQuietly(proxySocket);
@@ -540,9 +626,9 @@ public class SocksProxyService {
     }
 
     /**
-     * Relays data between client and proxy.
+     * Relays data between client and proxy with optimized performance.
      */
-    private void relay(Socket clientSocket, Socket proxySocket) throws IOException {
+    private void relay(Socket clientSocket, Socket proxySocket, ProxyEntry proxy) throws IOException {
         // Create threads to handle bidirectional data flow
         Thread clientToProxy = createRelayThread(clientSocket, proxySocket, "client -> proxy");
         Thread proxyToClient = createRelayThread(proxySocket, clientSocket, "proxy -> client");
@@ -559,13 +645,34 @@ public class SocksProxyService {
             Thread.currentThread().interrupt();
         }
         
-        // Close both sockets
-        closeSocketQuietly(clientSocket);
+        // Try to return the proxy socket to the pool if it's still usable
+        if (!proxySocket.isClosed() && proxySocket.isConnected() && 
+            !proxySocket.isInputShutdown() && !proxySocket.isOutputShutdown()) {
+            
+            String key = proxy.getHost() + ":" + proxy.getPort();
+            Queue<Socket> pool = connectionPool.get(key);
+            
+            if (pool != null && pool.size() < MAX_CONNECTIONS_PER_PROXY) {
+                // Reset socket timeout to default
+                try {
+                    proxySocket.setSoTimeout(SOCKET_TIMEOUT);
+                    pool.offer(proxySocket);
+                    // Don't close the socket as it's now in the pool
+                    return;
+                } catch (Exception e) {
+                    // If there's any error, fallback to closing
+                    logError("Error returning socket to pool: " + e.getMessage());
+                }
+            }
+        }
+        
+        // If we got here, we need to close the proxy socket
         closeSocketQuietly(proxySocket);
+        closeSocketQuietly(clientSocket);
     }
 
     /**
-     * Creates a thread to relay data between two sockets.
+     * Creates an optimized thread to relay data between two sockets.
      */
     private Thread createRelayThread(Socket source, Socket destination, String description) {
         return new Thread(() -> {
