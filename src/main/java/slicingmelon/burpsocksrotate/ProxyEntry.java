@@ -1,5 +1,8 @@
 package slicingmelon.burpsocksrotate;
 
+/**
+ * Represents a SOCKS proxy entry with host, port and status information.
+ */
 public class ProxyEntry {
     private final String host;
     private final int port;
