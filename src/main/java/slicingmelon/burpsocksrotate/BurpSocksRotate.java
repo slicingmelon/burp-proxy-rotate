@@ -56,7 +56,7 @@ public class BurpSocksRotate implements BurpExtension {
     private int connectionTimeoutSec = 20;
     private int socketTimeoutSec = 120; 
     private int maxRetryCount = 2;
-    private int maxServiceThreads = 100;
+    private int maxConnectionsPerProxy = 50;
     private boolean loggingEnabled = true;
     
     // UI components for settings
@@ -64,7 +64,7 @@ public class BurpSocksRotate implements BurpExtension {
     private JSpinner connectionTimeoutSpinner;
     private JSpinner socketTimeoutSpinner;
     private JSpinner maxRetrySpinner;
-    private JSpinner maxThreadsSpinner;
+    private JSpinner maxConnectionsPerProxySpinner;
     private JCheckBox enableLoggingCheckbox;
     
     // Persistence keys
@@ -74,7 +74,7 @@ public class BurpSocksRotate implements BurpExtension {
     private static final String CONNECTION_TIMEOUT_KEY = "connectionTimeout";
     private static final String SOCKET_TIMEOUT_KEY = "socketTimeout";
     private static final String MAX_RETRY_KEY = "maxRetry";
-    private static final String MAX_THREADS_KEY = "maxThreads";
+    private static final String MAX_CONNECTIONS_PER_PROXY_KEY = "maxConnectionsPerProxy";
     private static final String LOGGING_ENABLED_KEY = "loggingEnabled";
     
     // Add a timer field at the class level
@@ -86,7 +86,7 @@ public class BurpSocksRotate implements BurpExtension {
     private static final int DEFAULT_CONNECTION_TIMEOUT = 20;
     private static final int DEFAULT_SOCKET_TIMEOUT = 120;
     private static final int DEFAULT_MAX_RETRY = 2;
-    private static final int DEFAULT_MAX_THREADS = 100;
+    private static final int DEFAULT_MAX_CONNECTIONS_PER_PROXY = 50;
 
     @Override
     public void initialize(MontoyaApi api) {
@@ -206,10 +206,10 @@ public class BurpSocksRotate implements BurpExtension {
             }
         }
         
-        String maxThreadsSetting = api.persistence().preferences().getString(MAX_THREADS_KEY);
-        if (maxThreadsSetting != null) {
+        String maxConnectionsPerProxySetting = api.persistence().preferences().getString(MAX_CONNECTIONS_PER_PROXY_KEY);
+        if (maxConnectionsPerProxySetting != null) {
             try {
-                maxServiceThreads = Integer.parseInt(maxThreadsSetting);
+                maxConnectionsPerProxy = Integer.parseInt(maxConnectionsPerProxySetting);
             } catch (NumberFormatException e) {
                 // Use default
             }
@@ -256,7 +256,7 @@ public class BurpSocksRotate implements BurpExtension {
         api.persistence().preferences().setString(CONNECTION_TIMEOUT_KEY, String.valueOf(connectionTimeoutSec));
         api.persistence().preferences().setString(SOCKET_TIMEOUT_KEY, String.valueOf(socketTimeoutSec));
         api.persistence().preferences().setString(MAX_RETRY_KEY, String.valueOf(maxRetryCount));
-        api.persistence().preferences().setString(MAX_THREADS_KEY, String.valueOf(maxServiceThreads));
+        api.persistence().preferences().setString(MAX_CONNECTIONS_PER_PROXY_KEY, String.valueOf(maxConnectionsPerProxy));
         api.persistence().preferences().setString(LOGGING_ENABLED_KEY, String.valueOf(loggingEnabled));
     }
     
@@ -610,7 +610,7 @@ public class BurpSocksRotate implements BurpExtension {
                 connectionTimeoutSec * 1000, // Convert to milliseconds
                 socketTimeoutSec * 1000,     // Convert to milliseconds
                 maxRetryCount,
-                maxServiceThreads
+                maxConnectionsPerProxy
             );
             
             // Set up a timer to update stats every 2 seconds if logging is enabled
@@ -1241,21 +1241,21 @@ public class BurpSocksRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(maxRetrySpinner, gbc);
         
-        // Max Service Threads
+        // Max Connections Per Proxy
         gbc.gridx = 0;
         gbc.gridy = 4;
-        controlsPanel.add(new JLabel("Max Service Threads:"), gbc);
+        controlsPanel.add(new JLabel("Max Connections Per Proxy:"), gbc);
         
-        SpinnerNumberModel maxThreadsModel = new SpinnerNumberModel(maxServiceThreads, 5, 200, 5); // 5-200 threads
-        maxThreadsSpinner = new JSpinner(maxThreadsModel);
-        maxThreadsSpinner.addChangeListener(_ -> {
-            maxServiceThreads = (Integer) maxThreadsSpinner.getValue();
+        SpinnerNumberModel maxConnectionsPerProxyModel = new SpinnerNumberModel(maxConnectionsPerProxy, 5, 1000, 5); // 5-1000 connections
+        maxConnectionsPerProxySpinner = new JSpinner(maxConnectionsPerProxyModel);
+        maxConnectionsPerProxySpinner.addChangeListener(_ -> {
+            maxConnectionsPerProxy = (Integer) maxConnectionsPerProxySpinner.getValue();
             saveSettings();
-            logMessage("Max service threads updated to " + maxServiceThreads);
+            logMessage("Max connections per proxy updated to " + maxConnectionsPerProxy);
         });
         
         gbc.gridx = 1;
-        controlsPanel.add(maxThreadsSpinner, gbc);
+        controlsPanel.add(maxConnectionsPerProxySpinner, gbc);
         
         // Enable Logging
         gbc.gridx = 0;
@@ -1286,7 +1286,9 @@ public class BurpSocksRotate implements BurpExtension {
         // Add explanatory text
         JTextArea explanationText = new JTextArea(
             "Changes take effect immediately and will be used for all new connections.\n" +
-            "Existing connections will continue to use their current settings."
+            "Existing connections will continue to use their current settings.\n\n" +
+            "Max Connections Per Proxy limits how many connections each proxy can handle\n" +
+            "before requests are routed to a different proxy."
         );
         explanationText.setEditable(false);
         explanationText.setLineWrap(true);
@@ -1313,7 +1315,7 @@ public class BurpSocksRotate implements BurpExtension {
         connectionTimeoutSec = DEFAULT_CONNECTION_TIMEOUT;
         socketTimeoutSec = DEFAULT_SOCKET_TIMEOUT;
         maxRetryCount = DEFAULT_MAX_RETRY;
-        maxServiceThreads = DEFAULT_MAX_THREADS;
+        maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
         
         // Restore logging state
         loggingEnabled = currentLoggingState;
@@ -1323,7 +1325,7 @@ public class BurpSocksRotate implements BurpExtension {
         connectionTimeoutSpinner.setValue(connectionTimeoutSec);
         socketTimeoutSpinner.setValue(socketTimeoutSec);
         maxRetrySpinner.setValue(maxRetryCount);
-        maxThreadsSpinner.setValue(maxServiceThreads);
+        maxConnectionsPerProxySpinner.setValue(maxConnectionsPerProxy);
         
         // Save settings
         saveSettings();
@@ -1337,7 +1339,7 @@ public class BurpSocksRotate implements BurpExtension {
             "• Connection Timeout: " + connectionTimeoutSec + " seconds\n" +
             "• Socket Timeout: " + socketTimeoutSec + " seconds\n" +
             "• Max Retry Count: " + maxRetryCount + "\n" +
-            "• Max Service Threads: " + maxServiceThreads + "\n\n" +
+            "• Max Connections Per Proxy: " + maxConnectionsPerProxy + "\n\n" +
             "Logging setting was preserved: " + (loggingEnabled ? "Enabled" : "Disabled"),
             "Settings Reset", 
             JOptionPane.INFORMATION_MESSAGE));

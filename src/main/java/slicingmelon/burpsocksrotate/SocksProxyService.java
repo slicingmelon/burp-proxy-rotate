@@ -31,7 +31,6 @@ public class SocksProxyService {
     private int connectionTimeout = 20000; // 20 seconds
     private int socketTimeout = 120000; // 120 seconds
     private int maxRetryCount = 2; // Number of proxies to try before giving up
-    private int maxThreads = 100; // Max concurrent connections
     private int maxConnectionsPerProxy = 50; // Maximum connections per proxy
     private int idleTimeoutSec = 60; // Idle timeout in seconds
     
@@ -52,6 +51,9 @@ public class SocksProxyService {
     private final Set<Socket> activeClientSockets = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Set<Thread> activeRelayThreads = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final AtomicInteger activeConnectionCount = new AtomicInteger(0);
+    
+    // Track connections per proxy
+    private final ConcurrentHashMap<String, AtomicInteger> connectionsPerProxy = new ConcurrentHashMap<>();
     
     // Reference to main extension for UI callbacks
     private BurpSocksRotate extension;
@@ -75,20 +77,17 @@ public class SocksProxyService {
     /**
      * Sets the service settings.
      */
-    public void setSettings(int bufferSize, int connectionTimeout, int socketTimeout, int maxRetryCount, int maxThreads) {
+    public void setSettings(int bufferSize, int connectionTimeout, int socketTimeout, int maxRetryCount, int maxConnectionsPerProxy) {
         this.bufferSize = bufferSize;
         this.connectionTimeout = connectionTimeout;
         this.socketTimeout = socketTimeout;
         this.maxRetryCount = maxRetryCount;
-        this.maxThreads = maxThreads;
-        
-        // Derive connection pool settings
-        this.maxConnectionsPerProxy = Math.max(5, maxThreads / 2);
+        this.maxConnectionsPerProxy = maxConnectionsPerProxy;
         this.idleTimeoutSec = Math.max(30, socketTimeout / 2000); // Half of socket timeout, but minimum 30 seconds
         
         logInfo("Settings updated: bufferSize=" + bufferSize + ", connectionTimeout=" + connectionTimeout + 
                 "ms, socketTimeout=" + socketTimeout + "ms, maxRetryCount=" + maxRetryCount + 
-                ", maxThreads=" + maxThreads + ", maxConnectionsPerProxy=" + maxConnectionsPerProxy +
+                ", maxConnectionsPerProxy=" + maxConnectionsPerProxy +
                 ", idleTimeoutSec=" + idleTimeoutSec);
     }
 
@@ -96,18 +95,17 @@ public class SocksProxyService {
      * Sets the service settings with explicit connection pool settings.
      */
     public void setSettings(int bufferSize, int connectionTimeout, int socketTimeout, 
-                          int maxRetryCount, int maxThreads, int maxConnectionsPerProxy, int idleTimeoutSec) {
+                          int maxRetryCount, int maxConnectionsPerProxy, int idleTimeoutSec) {
         this.bufferSize = bufferSize;
         this.connectionTimeout = connectionTimeout;
         this.socketTimeout = socketTimeout;
         this.maxRetryCount = maxRetryCount;
-        this.maxThreads = maxThreads;
         this.maxConnectionsPerProxy = maxConnectionsPerProxy;
         this.idleTimeoutSec = idleTimeoutSec;
         
         logInfo("Settings updated: bufferSize=" + bufferSize + ", connectionTimeout=" + connectionTimeout + 
                 "ms, socketTimeout=" + socketTimeout + "ms, maxRetryCount=" + maxRetryCount + 
-                ", maxThreads=" + maxThreads + ", maxConnectionsPerProxy=" + maxConnectionsPerProxy +
+                ", maxConnectionsPerProxy=" + maxConnectionsPerProxy +
                 ", idleTimeoutSec=" + idleTimeoutSec);
     }
 
@@ -143,7 +141,12 @@ public class SocksProxyService {
 
         this.localPort = port;
         
-        // Create a thread pool with a reasonable number of threads
+        // Create a cached thread pool that:
+        // - Creates new threads as needed for concurrent connections
+        // - Reuses idle threads when available 
+        // - Removes threads that are idle for 60 seconds
+        // - Is not bound by maxServiceThreads (which is now just a guideline)
+        // - Allows for better scaling with bursty traffic
         threadPool = Executors.newCachedThreadPool();
 
         serverThread = new Thread(() -> {
@@ -443,6 +446,7 @@ public class SocksProxyService {
                                String targetHost, int targetPort, int socksVersion, byte addressType) throws IOException {
         //InputStream clientIn = clientSocket.getInputStream();
         Socket proxySocket = null;
+        String selectedProxyKey = null;
         
         // Choose random proxy and attempt connection with retries
         for (int attempt = 0; attempt <= maxRetryCount; attempt++) {
@@ -472,6 +476,11 @@ public class SocksProxyService {
                 proxySocket.setReceiveBufferSize(bufferSize);
                 proxySocket.setSendBufferSize(bufferSize);
                 proxySocket.setKeepAlive(true); // Enable TCP keepalive
+                
+                // Track the connection to this proxy
+                selectedProxyKey = proxyKey;
+                connectionsPerProxy.computeIfAbsent(proxyKey, k -> new AtomicInteger(0))
+                                  .incrementAndGet();
                 
                 InputStream proxyIn = proxySocket.getInputStream();
                 OutputStream proxyOut = proxySocket.getOutputStream();
@@ -635,7 +644,7 @@ public class SocksProxyService {
                 }
                 
                 // Start bidirectional relay
-                relay(clientSocket, proxySocket);
+                relay(clientSocket, proxySocket, selectedProxyKey);
                 
                 // Connection succeeded, exit retry loop
                 return;
@@ -664,7 +673,7 @@ public class SocksProxyService {
     /**
      * Relays data between client and proxy with optimized performance.
      */
-    private void relay(Socket clientSocket, Socket proxySocket) throws IOException {
+    private void relay(Socket clientSocket, Socket proxySocket, String proxyKey) throws IOException {
         // Create threads to handle bidirectional data flow
         Thread clientToProxy = createRelayThread(clientSocket, proxySocket, "client -> proxy");
         Thread proxyToClient = createRelayThread(proxySocket, clientSocket, "proxy -> client");
@@ -705,12 +714,19 @@ public class SocksProxyService {
             clientToProxy.interrupt();
             proxyToClient.interrupt();
         } finally {
-
             activeRelayThreads.remove(clientToProxy);
             activeRelayThreads.remove(proxyToClient);
             
             // Always close sockets when done
             closeSocketQuietly(proxySocket);
+            
+            // Decrease connection count for this proxy
+            if (proxyKey != null) {
+                AtomicInteger count = connectionsPerProxy.get(proxyKey);
+                if (count != null) {
+                    count.decrementAndGet();
+                }
+            }
         }
     }
 
@@ -753,28 +769,44 @@ public class SocksProxyService {
 
     /**
      * Selects a random active proxy.
-     * Tries to match the requested SOCKS protocol version if possible.
+     * Respects the maxConnectionsPerProxy limit.
      */
     private ProxyEntry selectRandomActiveProxy() {
-        List<ProxyEntry> activeProxies = new ArrayList<>();
+        List<ProxyEntry> eligibleProxies = new ArrayList<>();
         
         proxyListLock.readLock().lock();
         try {
+            // First pass: collect all active proxies that haven't reached the connection limit
             for (ProxyEntry proxy : proxyList) {
                 if (proxy.isActive()) {
-                    activeProxies.add(proxy);
+                    String proxyKey = proxy.getHost() + ":" + proxy.getPort();
+                    AtomicInteger count = connectionsPerProxy.get(proxyKey);
+                    int currentConnections = count != null ? count.get() : 0;
+                    
+                    if (currentConnections < maxConnectionsPerProxy) {
+                        eligibleProxies.add(proxy);
+                    }
+                }
+            }
+            
+            // If no proxies are under the limit, use any active proxy
+            if (eligibleProxies.isEmpty()) {
+                for (ProxyEntry proxy : proxyList) {
+                    if (proxy.isActive()) {
+                        eligibleProxies.add(proxy);
+                    }
                 }
             }
         } finally {
             proxyListLock.readLock().unlock();
         }
         
-        if (activeProxies.isEmpty()) {
+        if (eligibleProxies.isEmpty()) {
             return null;
         }
         
-        // Select a random proxy
-        return activeProxies.get(random.nextInt(activeProxies.size()));
+        // Select a random proxy from eligible ones
+        return eligibleProxies.get(random.nextInt(eligibleProxies.size()));
     }
 
     /**
@@ -862,14 +894,34 @@ public class SocksProxyService {
     }
 
     /**
-     * Gets statistics about the active connections.
-     * Only available when the service is running.
+     * Gets connection stats for each proxy.
      */
     public String getConnectionPoolStats() {
-        if (serverRunning) {
-            return "Active connections: " + activeConnectionCount.get() + 
-                   ", Relay threads: " + activeRelayThreads.size();
+        if (!serverRunning) {
+            return "Service not running";
         }
-        return "Service not running";
+        
+        StringBuilder stats = new StringBuilder();
+        stats.append("Active connections: ").append(activeConnectionCount.get())
+             .append(", Relay threads: ").append(activeRelayThreads.size());
+        
+        // Add proxy-specific stats if there are active connections
+        if (!connectionsPerProxy.isEmpty()) {
+            stats.append(" | Proxies: ");
+            boolean first = true;
+            
+            for (String proxyKey : connectionsPerProxy.keySet()) {
+                int count = connectionsPerProxy.get(proxyKey).get();
+                if (count > 0) {
+                    if (!first) {
+                        stats.append(", ");
+                    }
+                    stats.append(proxyKey).append("(").append(count).append(")");
+                    first = false;
+                }
+            }
+        }
+        
+        return stats.toString();
     }
 } 
