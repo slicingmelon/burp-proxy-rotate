@@ -144,7 +144,7 @@ public class SocksProxyService {
         this.localPort = port;
         
         // Create a thread pool with a reasonable number of threads
-        threadPool = Executors.newFixedThreadPool(maxThreads);
+        threadPool = Executors.newCachedThreadPool();
 
         serverThread = new Thread(() -> {
             try {
