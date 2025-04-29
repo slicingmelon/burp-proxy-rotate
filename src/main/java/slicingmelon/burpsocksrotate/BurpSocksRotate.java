@@ -77,7 +77,6 @@ public class BurpSocksRotate implements BurpExtension {
     private static final String MAX_CONNECTIONS_PER_PROXY_KEY = "maxConnectionsPerProxy";
     private static final String LOGGING_ENABLED_KEY = "loggingEnabled";
     
-    // Add a timer field at the class level
     private javax.swing.Timer statsUpdateTimer;
     private JLabel statsLabel;
 
@@ -113,7 +112,7 @@ public class BurpSocksRotate implements BurpExtension {
         // Add shutdown hook
         api.extension().registerUnloadingHandler(this::shutdown);
         
-        logMessage("Burp SOCKS Proxy Rotate extension loaded successfully");
+        logMessage("Burp SOCKS Rotate extension loaded successfully");
     }
     
     /**
@@ -376,7 +375,6 @@ public class BurpSocksRotate implements BurpExtension {
         
         validateAllButton.addActionListener(_ -> validateAllProxies());
         
-        // Bulk add panel
         JPanel bulkPanel = new JPanel(new BorderLayout(5, 5));
         JTextArea bulkTextArea = new JTextArea(5, 30);
         bulkTextArea.setToolTipText("Enter one proxy per line in format socks5://host:port or socks4://host:port");
@@ -613,7 +611,6 @@ public class BurpSocksRotate implements BurpExtension {
                 maxConnectionsPerProxy
             );
             
-            // Set up a timer to update stats less frequently (5 seconds instead of 2)
             if (statsLabel != null) {
                 if (statsUpdateTimer == null) {
                     statsUpdateTimer = new javax.swing.Timer(5000, _ -> {
