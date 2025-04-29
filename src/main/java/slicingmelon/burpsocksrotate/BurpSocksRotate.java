@@ -573,7 +573,7 @@ public class BurpSocksRotate implements BurpExtension {
             int port = 10000 + random.nextInt(55000);
             try (ServerSocket socket = new ServerSocket(port)) {
                 // If we can bind to it, it's available
-                return port;
+                return socket.getLocalPort();
             } catch (IOException e) {
                 // Port is in use, try another one
             }
@@ -602,12 +602,10 @@ public class BurpSocksRotate implements BurpExtension {
             proxyListLock.readLock().unlock();
         }
 
-        // Use a random port to avoid conflicts
         int portToUse = findAvailablePort();
         configuredLocalPort = portToUse;
         saveProxies();
         
-        // Define callbacks for success and failure
         Runnable onSuccessCallback = () -> {
             SwingUtilities.invokeLater(() -> {
                 updateServerButtons();
@@ -617,8 +615,8 @@ public class BurpSocksRotate implements BurpExtension {
                 
                 // Update status label
                 statusLabel.setText("SOCKS Rotate service active on port " + portToUse);
-                statusLabel.setForeground(new Color(0, 150, 0)); // Dark green
-                statusLabel.setBackground(new Color(235, 255, 235)); // Light green background
+                statusLabel.setForeground(new Color(0, 150, 0)); 
+                statusLabel.setBackground(new Color(235, 255, 235));
                 
                 JOptionPane.showMessageDialog(null,
                     "Burp SOCKS Rotate enabled on port " + portToUse + "\n\n" +
@@ -633,10 +631,9 @@ public class BurpSocksRotate implements BurpExtension {
             SwingUtilities.invokeLater(() -> {
                 logMessage("Proxy service failed to start: " + errorMessage);
                 
-                // Update status label to show error
                 statusLabel.setText("Failed to start: " + errorMessage);
                 statusLabel.setForeground(Color.RED);
-                statusLabel.setBackground(new Color(255, 235, 235)); // Light red background
+                statusLabel.setBackground(new Color(255, 235, 235)); 
                 
                 JOptionPane.showMessageDialog(null, 
                     "Failed to enable SOCKS Rotate: " + errorMessage,
@@ -646,7 +643,6 @@ public class BurpSocksRotate implements BurpExtension {
             });
         };
 
-        // Start the proxy service with callbacks
         try {
             logMessage("Enabling Burp SOCKS Rotate service on port " + portToUse + "...");
             
@@ -666,10 +662,8 @@ public class BurpSocksRotate implements BurpExtension {
                             String stats = socksProxyService.getConnectionPoolStats();
                             statsLabel.setText(stats);
                             
-                            // Only log stats when there's significant activity and logging is enabled
                             if (loggingEnabled) {
                                 int activeConnections = socksProxyService.getActiveConnectionCount();
-                                // Only log if more than 5 connections or every 30 seconds
                                 if (activeConnections > 5 || (System.currentTimeMillis() / 1000) % 30 == 0) {
                                     logMessage(stats);
                                 }
@@ -704,11 +698,10 @@ public class BurpSocksRotate implements BurpExtension {
         socksProxyService.stop();
         updateServerButtons();
         logMessage("Burp SOCKS Rotate service stopped.");
-        
-        // Update status label
+
         statusLabel.setText("SOCKS Rotate service not active");
         statusLabel.setForeground(Color.GRAY);
-        statusLabel.setBackground(new Color(245, 245, 245)); // Light gray background
+        statusLabel.setBackground(new Color(245, 245, 245)); 
 
         if (statsUpdateTimer != null && statsUpdateTimer.isRunning()) {
             statsUpdateTimer.stop();
@@ -829,7 +822,6 @@ public class BurpSocksRotate implements BurpExtension {
      * Logs a message to both the UI and Burp's output.
      */
     private void logMessage(String message) {
-        // Only log to Burp output if logging is enabled
         if (api != null && api.logging() != null && loggingEnabled) {
             api.logging().logToOutput(message);
         }
@@ -1230,7 +1222,6 @@ public class BurpSocksRotate implements BurpExtension {
         JPanel settingsPanel = new JPanel(new BorderLayout(10, 10));
         settingsPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
         
-        // Create a panel with GridBagLayout for the settings
         JPanel controlsPanel = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.fill = GridBagConstraints.HORIZONTAL;
@@ -1343,7 +1334,6 @@ public class BurpSocksRotate implements BurpExtension {
         resetButton.addActionListener(_ -> resetDefaultSettings());
         controlsPanel.add(resetButton, gbc);
         
-        // Add explanatory text
         JTextArea explanationText = new JTextArea(
             "Changes take effect immediately and will be used for all new connections.\n" +
             "Existing connections will continue to use their current settings.\n\n" +
@@ -1356,7 +1346,6 @@ public class BurpSocksRotate implements BurpExtension {
         explanationText.setBackground(settingsPanel.getBackground());
         explanationText.setBorder(new EmptyBorder(10, 5, 5, 5));
         
-        // Add components to settings panel
         settingsPanel.add(controlsPanel, BorderLayout.NORTH);
         settingsPanel.add(explanationText, BorderLayout.CENTER);
         
