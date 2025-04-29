@@ -53,10 +53,6 @@ public class SocksProxyService {
     private final Set<Thread> activeRelayThreads = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final AtomicInteger activeConnectionCount = new AtomicInteger(0);
     
-    // Connection pool and socket factory
-    private ProxyConnectionPool connectionPool;
-    private ProxySocketFactory socketFactory;
-    
     // Reference to main extension for UI callbacks
     private BurpSocksRotate extension;
 

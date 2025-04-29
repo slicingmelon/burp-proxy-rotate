@@ -77,18 +77,6 @@ public class BurpSocksRotate implements BurpExtension {
     private static final String MAX_THREADS_KEY = "maxThreads";
     private static final String LOGGING_ENABLED_KEY = "loggingEnabled";
     
-    // Add connection pool settings to the settings section
-    private static final String MAX_CONN_PER_PROXY_KEY = "maxConnectionsPerProxy";
-    private static final String IDLE_TIMEOUT_KEY = "idleTimeoutSec";
-    
-    // Add default values
-    private int maxConnectionsPerProxy = 10;
-    private int idleTimeoutSec = 60;
-    
-    // Add UI components for new settings
-    private JSpinner maxConnectionsPerProxySpinner;
-    private JSpinner idleTimeoutSpinner;
-
     // Add a timer field at the class level
     private javax.swing.Timer statsUpdateTimer;
     private JLabel statsLabel;
@@ -224,25 +212,6 @@ public class BurpSocksRotate implements BurpExtension {
         if (loggingEnabledSetting != null) {
             loggingEnabled = Boolean.parseBoolean(loggingEnabledSetting);
         }
-        
-        // Load new settings
-        String maxConnectionsPerProxySetting = api.persistence().preferences().getString(MAX_CONN_PER_PROXY_KEY);
-        if (maxConnectionsPerProxySetting != null) {
-            try {
-                maxConnectionsPerProxy = Integer.parseInt(maxConnectionsPerProxySetting);
-            } catch (NumberFormatException e) {
-                // Use default
-            }
-        }
-        
-        String idleTimeoutSetting = api.persistence().preferences().getString(IDLE_TIMEOUT_KEY);
-        if (idleTimeoutSetting != null) {
-            try {
-                idleTimeoutSec = Integer.parseInt(idleTimeoutSetting);
-            } catch (NumberFormatException e) {
-                // Use default
-            }
-        }
     }
     
     /**
@@ -282,8 +251,6 @@ public class BurpSocksRotate implements BurpExtension {
         api.persistence().preferences().setString(MAX_RETRY_KEY, String.valueOf(maxRetryCount));
         api.persistence().preferences().setString(MAX_THREADS_KEY, String.valueOf(maxServiceThreads));
         api.persistence().preferences().setString(LOGGING_ENABLED_KEY, String.valueOf(loggingEnabled));
-        api.persistence().preferences().setString(MAX_CONN_PER_PROXY_KEY, String.valueOf(maxConnectionsPerProxy));
-        api.persistence().preferences().setString(IDLE_TIMEOUT_KEY, String.valueOf(idleTimeoutSec));
     }
     
     /**
@@ -636,9 +603,7 @@ public class BurpSocksRotate implements BurpExtension {
                 connectionTimeoutSec * 1000, // Convert to milliseconds
                 socketTimeoutSec * 1000,     // Convert to milliseconds
                 maxRetryCount,
-                maxServiceThreads,
-                maxConnectionsPerProxy,
-                idleTimeoutSec
+                maxServiceThreads
             );
             
             // Set up a timer to update stats every 2 seconds if logging is enabled
@@ -1285,41 +1250,9 @@ public class BurpSocksRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(maxThreadsSpinner, gbc);
         
-        // Max Connections Per Proxy
-        gbc.gridx = 0;
-        gbc.gridy = 5;
-        controlsPanel.add(new JLabel("Max Connections Per Proxy:"), gbc);
-        
-        SpinnerNumberModel maxConnectionsPerProxyModel = new SpinnerNumberModel(maxConnectionsPerProxy, 1, 50, 1);
-        maxConnectionsPerProxySpinner = new JSpinner(maxConnectionsPerProxyModel);
-        maxConnectionsPerProxySpinner.addChangeListener(e -> {
-            maxConnectionsPerProxy = (Integer) maxConnectionsPerProxySpinner.getValue();
-            saveSettings();
-            logMessage("Max connections per proxy updated to " + maxConnectionsPerProxy);
-        });
-        
-        gbc.gridx = 1;
-        controlsPanel.add(maxConnectionsPerProxySpinner, gbc);
-        
-        // Idle Timeout
-        gbc.gridx = 0;
-        gbc.gridy = 6;
-        controlsPanel.add(new JLabel("Connection Idle Timeout (seconds):"), gbc);
-        
-        SpinnerNumberModel idleTimeoutModel = new SpinnerNumberModel(idleTimeoutSec, 10, 300, 10);
-        idleTimeoutSpinner = new JSpinner(idleTimeoutModel);
-        idleTimeoutSpinner.addChangeListener(e -> {
-            idleTimeoutSec = (Integer) idleTimeoutSpinner.getValue();
-            saveSettings();
-            logMessage("Connection idle timeout updated to " + idleTimeoutSec + " seconds");
-        });
-        
-        gbc.gridx = 1;
-        controlsPanel.add(idleTimeoutSpinner, gbc);
-        
         // Enable Logging
         gbc.gridx = 0;
-        gbc.gridy = 7;
+        gbc.gridy = 5;
         controlsPanel.add(new JLabel("Enable Logging:"), gbc);
         
         enableLoggingCheckbox = new JCheckBox();
@@ -1336,8 +1269,7 @@ public class BurpSocksRotate implements BurpExtension {
         // Add explanatory text
         JTextArea explanationText = new JTextArea(
             "Changes take effect immediately and will be used for all new connections.\n" +
-            "Existing connections will continue to use their current settings.\n" +
-            "Connection pooling improves performance by reusing proxy connections."
+            "Existing connections will continue to use their current settings."
         );
         explanationText.setEditable(false);
         explanationText.setLineWrap(true);
