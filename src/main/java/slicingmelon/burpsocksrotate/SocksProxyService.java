@@ -27,12 +27,12 @@ import java.util.function.Consumer;
  */
 public class SocksProxyService {
     // Default settings
-    private int bufferSize = 4096; // 4KB - reduced from 16KB for better concurrency
-    private int connectionTimeout = 10000; // 10 seconds - reduced from 30 seconds
-    private int socketTimeout = 30000; // 30 seconds - reduced from 60 seconds
+    private int bufferSize = 8092; // 8KB
+    private int connectionTimeout = 20000; // 20 seconds
+    private int socketTimeout = 120000; // 120 seconds
     private int maxRetryCount = 2; // Number of proxies to try before giving up
-    private int maxThreads = 50; // Increased from 20 to 50 to handle more concurrent connections
-    private int maxConnectionsPerProxy = 10; // Maximum connections per proxy
+    private int maxThreads = 100; // Max concurrent connections
+    private int maxConnectionsPerProxy = 50; // Maximum connections per proxy
     private int idleTimeoutSec = 60; // Idle timeout in seconds
     
     // Dependencies
