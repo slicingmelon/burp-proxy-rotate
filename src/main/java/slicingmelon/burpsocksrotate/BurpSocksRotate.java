@@ -52,11 +52,11 @@ public class BurpSocksRotate implements BurpExtension {
     private int configuredLocalPort = 1080;
     
     // Settings with defaults
-    private int bufferSize = 4096; // 4KB - reduced from 16KB for better concurrency
-    private int connectionTimeoutSec = 10; // 10 seconds - reduced from 30 seconds
-    private int socketTimeoutSec = 30; // 30 seconds - reduced from 60 seconds
+    private int bufferSize = 8092; // 8KB
+    private int connectionTimeoutSec = 20;
+    private int socketTimeoutSec = 120; 
     private int maxRetryCount = 2;
-    private int maxServiceThreads = 50; // Increased from 20 to 50 to handle more concurrent connections
+    private int maxServiceThreads = 100;
     private boolean loggingEnabled = true;
     
     // UI components for settings
@@ -80,6 +80,13 @@ public class BurpSocksRotate implements BurpExtension {
     // Add a timer field at the class level
     private javax.swing.Timer statsUpdateTimer;
     private JLabel statsLabel;
+
+    // Add default constants
+    private static final int DEFAULT_BUFFER_SIZE = 8092;
+    private static final int DEFAULT_CONNECTION_TIMEOUT = 20;
+    private static final int DEFAULT_SOCKET_TIMEOUT = 120;
+    private static final int DEFAULT_MAX_RETRY = 2;
+    private static final int DEFAULT_MAX_THREADS = 100;
 
     @Override
     public void initialize(MontoyaApi api) {
@@ -1266,6 +1273,16 @@ public class BurpSocksRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(enableLoggingCheckbox, gbc);
         
+        // Reset Default Settings Button
+        gbc.gridx = 0;
+        gbc.gridy = 6;
+        gbc.gridwidth = 2;
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.anchor = GridBagConstraints.CENTER;
+        JButton resetButton = new JButton("Reset Default Settings");
+        resetButton.addActionListener(_ -> resetDefaultSettings());
+        controlsPanel.add(resetButton, gbc);
+        
         // Add explanatory text
         JTextArea explanationText = new JTextArea(
             "Changes take effect immediately and will be used for all new connections.\n" +
@@ -1282,5 +1299,47 @@ public class BurpSocksRotate implements BurpExtension {
         settingsPanel.add(explanationText, BorderLayout.CENTER);
         
         return settingsPanel;
+    }
+    
+    /**
+     * Resets all settings to their default values except for logging setting.
+     */
+    private void resetDefaultSettings() {
+        // Store current logging state
+        boolean currentLoggingState = loggingEnabled;
+        
+        // Reset to defaults
+        bufferSize = DEFAULT_BUFFER_SIZE;
+        connectionTimeoutSec = DEFAULT_CONNECTION_TIMEOUT;
+        socketTimeoutSec = DEFAULT_SOCKET_TIMEOUT;
+        maxRetryCount = DEFAULT_MAX_RETRY;
+        maxServiceThreads = DEFAULT_MAX_THREADS;
+        
+        // Restore logging state
+        loggingEnabled = currentLoggingState;
+        
+        // Update UI
+        bufferSizeSpinner.setValue(bufferSize);
+        connectionTimeoutSpinner.setValue(connectionTimeoutSec);
+        socketTimeoutSpinner.setValue(socketTimeoutSec);
+        maxRetrySpinner.setValue(maxRetryCount);
+        maxThreadsSpinner.setValue(maxServiceThreads);
+        
+        // Save settings
+        saveSettings();
+        
+        logMessage("Settings reset to defaults (except logging)");
+        
+        // Show confirmation dialog
+        SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(null, 
+            "Settings have been reset to default values:\n\n" +
+            "• Buffer Size: " + bufferSize + " bytes\n" +
+            "• Connection Timeout: " + connectionTimeoutSec + " seconds\n" +
+            "• Socket Timeout: " + socketTimeoutSec + " seconds\n" +
+            "• Max Retry Count: " + maxRetryCount + "\n" +
+            "• Max Service Threads: " + maxServiceThreads + "\n\n" +
+            "Logging setting was preserved: " + (loggingEnabled ? "Enabled" : "Disabled"),
+            "Settings Reset", 
+            JOptionPane.INFORMATION_MESSAGE));
     }
 }
