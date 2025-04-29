@@ -698,7 +698,7 @@ public class BurpSocksRotate implements BurpExtension {
         logMessage("Disabling Burp SOCKS Rotate service...");
         
         // First update Burp's SOCKS proxy settings to disable the proxy
-        updateBurpSocksSettings("localhost", configuredLocalPort, false);
+        updateBurpSocksSettings("127.0.0.1", configuredLocalPort, false);
         
         // Now stop the service
         socksProxyService.stop();
