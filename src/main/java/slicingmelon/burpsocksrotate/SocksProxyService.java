@@ -22,11 +22,15 @@ import java.util.function.Consumer;
  */
 public class SocksProxyService {
     // Core settings - increased for better performance
-    private static final int BUFFER_SIZE = 32768; // Increased buffer size (32KB)
+    private static final int BUFFER_SIZE = 16384; // 16KB
+    //private static final int BUFFER_SIZE = 32768; // Increased buffer size (32KB)
+    //private static final int BUFFER_SIZE = 65536; // 64KB
+    //private static final int BUFFER_SIZE = 131072 ; // 128KB
     private static final int CONNECTION_TIMEOUT = 30000; // 30 seconds
     private static final int SOCKET_TIMEOUT = 60000; // 60 seconds
     private static final int MAX_RETRY_COUNT = 2; // Number of proxies to try before giving up
 
+    private static final int MAX_THREADS = 20; // Maximum number of threads
     // Dependencies
     private final Logging logging;
     private final List<ProxyEntry> proxyList;
@@ -85,7 +89,7 @@ public class SocksProxyService {
         this.localPort = port;
         
         // Create a thread pool with a reasonable number of threads
-        threadPool = Executors.newFixedThreadPool(50); // Increased thread pool size
+        threadPool = Executors.newFixedThreadPool(MAX_THREADS); // Increased thread pool size
 
         serverThread = new Thread(() -> {
             try {

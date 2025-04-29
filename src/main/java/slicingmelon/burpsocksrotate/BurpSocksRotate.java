@@ -47,9 +47,31 @@ public class BurpSocksRotate implements BurpExtension {
     // Configuration 
     private int configuredLocalPort = 1080;
     
+    // Settings with defaults
+    private int bufferSize = 16384; // 16KB
+    private int connectionTimeoutSec = 30; // 30 seconds
+    private int socketTimeoutSec = 60; // 60 seconds
+    private int maxRetryCount = 2;
+    private int maxServiceThreads = 20;
+    private boolean loggingEnabled = true;
+    
+    // UI components for settings
+    private JSpinner bufferSizeSpinner;
+    private JSpinner connectionTimeoutSpinner;
+    private JSpinner socketTimeoutSpinner;
+    private JSpinner maxRetrySpinner;
+    private JSpinner maxThreadsSpinner;
+    private JCheckBox enableLoggingCheckbox;
+    
     // Persistence keys
     private static final String PROXY_LIST_KEY = "proxyList";
     private static final String PORT_KEY = "localPort";
+    private static final String BUFFER_SIZE_KEY = "bufferSize";
+    private static final String CONNECTION_TIMEOUT_KEY = "connectionTimeout";
+    private static final String SOCKET_TIMEOUT_KEY = "socketTimeout";
+    private static final String MAX_RETRY_KEY = "maxRetry";
+    private static final String MAX_THREADS_KEY = "maxThreads";
+    private static final String LOGGING_ENABLED_KEY = "loggingEnabled";
 
     @Override
     public void initialize(MontoyaApi api) {
@@ -118,6 +140,57 @@ public class BurpSocksRotate implements BurpExtension {
                 // Ignore, use default port
             }
         }
+        
+        // Load settings
+        String bufferSizeSetting = api.persistence().preferences().getString(BUFFER_SIZE_KEY);
+        if (bufferSizeSetting != null) {
+            try {
+                bufferSize = Integer.parseInt(bufferSizeSetting);
+            } catch (NumberFormatException e) {
+                // Use default
+            }
+        }
+        
+        String connectionTimeoutSetting = api.persistence().preferences().getString(CONNECTION_TIMEOUT_KEY);
+        if (connectionTimeoutSetting != null) {
+            try {
+                connectionTimeoutSec = Integer.parseInt(connectionTimeoutSetting);
+            } catch (NumberFormatException e) {
+                // Use default
+            }
+        }
+        
+        String socketTimeoutSetting = api.persistence().preferences().getString(SOCKET_TIMEOUT_KEY);
+        if (socketTimeoutSetting != null) {
+            try {
+                socketTimeoutSec = Integer.parseInt(socketTimeoutSetting);
+            } catch (NumberFormatException e) {
+                // Use default
+            }
+        }
+        
+        String maxRetrySetting = api.persistence().preferences().getString(MAX_RETRY_KEY);
+        if (maxRetrySetting != null) {
+            try {
+                maxRetryCount = Integer.parseInt(maxRetrySetting);
+            } catch (NumberFormatException e) {
+                // Use default
+            }
+        }
+        
+        String maxThreadsSetting = api.persistence().preferences().getString(MAX_THREADS_KEY);
+        if (maxThreadsSetting != null) {
+            try {
+                maxServiceThreads = Integer.parseInt(maxThreadsSetting);
+            } catch (NumberFormatException e) {
+                // Use default
+            }
+        }
+        
+        String loggingEnabledSetting = api.persistence().preferences().getString(LOGGING_ENABLED_KEY);
+        if (loggingEnabledSetting != null) {
+            loggingEnabled = Boolean.parseBoolean(loggingEnabledSetting);
+        }
     }
     
     /**
@@ -136,6 +209,16 @@ public class BurpSocksRotate implements BurpExtension {
         
         api.persistence().preferences().setString(PROXY_LIST_KEY, sb.toString());
         api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
+    }
+    
+    private void saveSettings() {
+        // Save each setting
+        api.persistence().preferences().setString(BUFFER_SIZE_KEY, String.valueOf(bufferSize));
+        api.persistence().preferences().setString(CONNECTION_TIMEOUT_KEY, String.valueOf(connectionTimeoutSec));
+        api.persistence().preferences().setString(SOCKET_TIMEOUT_KEY, String.valueOf(socketTimeoutSec));
+        api.persistence().preferences().setString(MAX_RETRY_KEY, String.valueOf(maxRetryCount));
+        api.persistence().preferences().setString(MAX_THREADS_KEY, String.valueOf(maxServiceThreads));
+        api.persistence().preferences().setString(LOGGING_ENABLED_KEY, String.valueOf(loggingEnabled));
     }
     
     /**
@@ -361,6 +444,9 @@ public class BurpSocksRotate implements BurpExtension {
         logTextArea.setEditable(false);
         JScrollPane logScrollPane = new JScrollPane(logTextArea);
         
+        // Create settings panel
+        JPanel settingsPanel = createSettingsPanel();
+        
         // Create tabs
         JTabbedPane tabbedPane = new JTabbedPane();
         
@@ -375,6 +461,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         tabbedPane.addTab("Proxy List", proxyManagementPanel);
         tabbedPane.addTab("Bulk Add", bulkPanel);
+        tabbedPane.addTab("Settings", settingsPanel);
         tabbedPane.addTab("Log", logScrollPane);
         
         mainPanel.add(controlPanel, BorderLayout.NORTH);
@@ -453,6 +540,16 @@ public class BurpSocksRotate implements BurpExtension {
         // Start the proxy service with callbacks
         try {
             logMessage("Attempting to start SOCKS proxy service on port " + portToUse + "...");
+            
+            // Initialize service with current settings
+            socksProxyService.setSettings(
+                bufferSize,
+                connectionTimeoutSec * 1000, // Convert to milliseconds
+                socketTimeoutSec * 1000,     // Convert to milliseconds
+                maxRetryCount,
+                maxServiceThreads
+            );
+            
             socksProxyService.start(portToUse, onSuccessCallback, onFailureCallback);
         } catch (Exception ex) {
             logMessage("Unexpected error trying to initiate proxy service start: " + ex.getMessage());
@@ -585,10 +682,12 @@ public class BurpSocksRotate implements BurpExtension {
      * Logs a message to both the UI and Burp's output.
      */
     private void logMessage(String message) {
-        if (api != null && api.logging() != null) {
+        // Only log to Burp output if logging is enabled
+        if (api != null && api.logging() != null && loggingEnabled) {
             api.logging().logToOutput(message);
         }
         
+        // Always log to the UI text area
         if (logTextArea != null) {
             SwingUtilities.invokeLater(() -> {
                 logTextArea.append(message + "\n");
@@ -886,5 +985,133 @@ public class BurpSocksRotate implements BurpExtension {
             }
             updateProxyTable();
         });
+    }
+
+    /**
+     * Creates the settings panel with all configuration options.
+     */
+    private JPanel createSettingsPanel() {
+        JPanel settingsPanel = new JPanel(new BorderLayout(10, 10));
+        settingsPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        
+        // Create a panel with GridBagLayout for the settings
+        JPanel controlsPanel = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.anchor = GridBagConstraints.WEST;
+        
+        // Buffer Size
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        controlsPanel.add(new JLabel("Buffer Size (bytes):"), gbc);
+        
+        SpinnerNumberModel bufferModel = new SpinnerNumberModel(bufferSize, 1024, 1048576, 1024); // 1KB to 1MB
+        bufferSizeSpinner = new JSpinner(bufferModel);
+        bufferSizeSpinner.addChangeListener(e -> {
+            bufferSize = (Integer) bufferSizeSpinner.getValue();
+            saveSettings();
+            logMessage("Buffer size updated to " + bufferSize + " bytes");
+        });
+        
+        gbc.gridx = 1;
+        controlsPanel.add(bufferSizeSpinner, gbc);
+        
+        // Connection Timeout
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        controlsPanel.add(new JLabel("Connection Timeout (seconds):"), gbc);
+        
+        SpinnerNumberModel connTimeoutModel = new SpinnerNumberModel(connectionTimeoutSec, 1, 300, 1); // 1-300 seconds
+        connectionTimeoutSpinner = new JSpinner(connTimeoutModel);
+        connectionTimeoutSpinner.addChangeListener(e -> {
+            connectionTimeoutSec = (Integer) connectionTimeoutSpinner.getValue();
+            saveSettings();
+            logMessage("Connection timeout updated to " + connectionTimeoutSec + " seconds");
+        });
+        
+        gbc.gridx = 1;
+        controlsPanel.add(connectionTimeoutSpinner, gbc);
+        
+        // Socket Timeout
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        controlsPanel.add(new JLabel("Socket Timeout (seconds):"), gbc);
+        
+        SpinnerNumberModel socketTimeoutModel = new SpinnerNumberModel(socketTimeoutSec, 1, 300, 1); // 1-300 seconds
+        socketTimeoutSpinner = new JSpinner(socketTimeoutModel);
+        socketTimeoutSpinner.addChangeListener(e -> {
+            socketTimeoutSec = (Integer) socketTimeoutSpinner.getValue();
+            saveSettings();
+            logMessage("Socket timeout updated to " + socketTimeoutSec + " seconds");
+        });
+        
+        gbc.gridx = 1;
+        controlsPanel.add(socketTimeoutSpinner, gbc);
+        
+        // Max Retry Count
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        controlsPanel.add(new JLabel("Max Retry Count:"), gbc);
+        
+        SpinnerNumberModel maxRetryModel = new SpinnerNumberModel(maxRetryCount, 0, 10, 1); // 0-10 retries
+        maxRetrySpinner = new JSpinner(maxRetryModel);
+        maxRetrySpinner.addChangeListener(e -> {
+            maxRetryCount = (Integer) maxRetrySpinner.getValue();
+            saveSettings();
+            logMessage("Max retry count updated to " + maxRetryCount);
+        });
+        
+        gbc.gridx = 1;
+        controlsPanel.add(maxRetrySpinner, gbc);
+        
+        // Max Service Threads
+        gbc.gridx = 0;
+        gbc.gridy = 4;
+        controlsPanel.add(new JLabel("Max Service Threads:"), gbc);
+        
+        SpinnerNumberModel maxThreadsModel = new SpinnerNumberModel(maxServiceThreads, 5, 200, 5); // 5-200 threads
+        maxThreadsSpinner = new JSpinner(maxThreadsModel);
+        maxThreadsSpinner.addChangeListener(e -> {
+            maxServiceThreads = (Integer) maxThreadsSpinner.getValue();
+            saveSettings();
+            logMessage("Max service threads updated to " + maxServiceThreads);
+        });
+        
+        gbc.gridx = 1;
+        controlsPanel.add(maxThreadsSpinner, gbc);
+        
+        // Enable Logging
+        gbc.gridx = 0;
+        gbc.gridy = 5;
+        controlsPanel.add(new JLabel("Enable Logging:"), gbc);
+        
+        enableLoggingCheckbox = new JCheckBox();
+        enableLoggingCheckbox.setSelected(loggingEnabled);
+        enableLoggingCheckbox.addActionListener(e -> {
+            loggingEnabled = enableLoggingCheckbox.isSelected();
+            saveSettings();
+            logMessage("Logging " + (loggingEnabled ? "enabled" : "disabled"));
+        });
+        
+        gbc.gridx = 1;
+        controlsPanel.add(enableLoggingCheckbox, gbc);
+        
+        // Add explanatory text
+        JTextArea explanationText = new JTextArea(
+            "Changes take effect immediately and will be used for all new connections. " +
+            "Existing connections will continue to use their current settings."
+        );
+        explanationText.setEditable(false);
+        explanationText.setLineWrap(true);
+        explanationText.setWrapStyleWord(true);
+        explanationText.setBackground(settingsPanel.getBackground());
+        explanationText.setBorder(new EmptyBorder(10, 5, 5, 5));
+        
+        // Add components to settings panel
+        settingsPanel.add(controlsPanel, BorderLayout.NORTH);
+        settingsPanel.add(explanationText, BorderLayout.CENTER);
+        
+        return settingsPanel;
     }
 }
