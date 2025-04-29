@@ -270,11 +270,11 @@ public class BurpSocksRotate implements BurpExtension {
         serverControls.add(portField);
         
         startServerButton = new JButton("Start Proxy Server");
-        startServerButton.addActionListener(e -> startProxyServer());
+        startServerButton.addActionListener(_ -> startProxyServer());
         serverControls.add(startServerButton);
         
         stopServerButton = new JButton("Stop Proxy Server");
-        stopServerButton.addActionListener(e -> stopProxyServer());
+        stopServerButton.addActionListener(_ -> stopProxyServer());
         stopServerButton.setEnabled(false);
         serverControls.add(stopServerButton);
         
@@ -333,7 +333,7 @@ public class BurpSocksRotate implements BurpExtension {
         gbc.gridx = 7;
         inputPanel.add(validateAllButton, gbc);
         
-        addButton.addActionListener(e -> {
+        addButton.addActionListener(_ -> {
             String protocol = (String) protocolCombo.getSelectedItem();
             String host = hostField.getText().trim();
             String portText = addPortField.getText().trim();
@@ -367,7 +367,7 @@ public class BurpSocksRotate implements BurpExtension {
             }
         });
         
-        validateAllButton.addActionListener(e -> validateAllProxies());
+        validateAllButton.addActionListener(_ -> validateAllProxies());
         
         // Bulk add panel
         JPanel bulkPanel = new JPanel(new BorderLayout(5, 5));
@@ -380,7 +380,7 @@ public class BurpSocksRotate implements BurpExtension {
         bulkPanel.add(bulkScrollPane, BorderLayout.CENTER);
         bulkPanel.add(bulkAddButton, BorderLayout.SOUTH);
         
-        bulkAddButton.addActionListener(e -> {
+        bulkAddButton.addActionListener(_ -> {
             String bulk = bulkTextArea.getText().trim();
             if (bulk.isEmpty()) {
                 return;
@@ -467,7 +467,7 @@ public class BurpSocksRotate implements BurpExtension {
         JButton deleteButton = new JButton("Delete Selected");
         JButton clearButton = new JButton("Clear All");
         
-        deleteButton.addActionListener(e -> {
+        deleteButton.addActionListener(_ -> {
             int selectedRow = proxyTable.getSelectedRow();
             if (selectedRow >= 0) {
                 int modelRow = proxyTable.convertRowIndexToModel(selectedRow);
@@ -479,7 +479,7 @@ public class BurpSocksRotate implements BurpExtension {
             }
         });
         
-        clearButton.addActionListener(e -> {
+        clearButton.addActionListener(_ -> {
             int confirm = JOptionPane.showConfirmDialog(
                     mainPanel,
                     "Are you sure you want to remove all proxies?",
@@ -609,7 +609,7 @@ public class BurpSocksRotate implements BurpExtension {
             // Set up a timer to update stats every 2 seconds if logging is enabled
             if (loggingEnabled && statsLabel != null) {
                 if (statsUpdateTimer == null) {
-                    statsUpdateTimer = new javax.swing.Timer(2000, e -> {
+                    statsUpdateTimer = new javax.swing.Timer(2000, _ -> {
                         if (socksProxyService != null && socksProxyService.isRunning()) {
                             String stats = socksProxyService.getConnectionPoolStats();
                             statsLabel.setText(stats);
@@ -1177,7 +1177,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         SpinnerNumberModel bufferModel = new SpinnerNumberModel(bufferSize, 1024, 1048576, 1024); // 1KB to 1MB
         bufferSizeSpinner = new JSpinner(bufferModel);
-        bufferSizeSpinner.addChangeListener(e -> {
+        bufferSizeSpinner.addChangeListener(_ -> {
             bufferSize = (Integer) bufferSizeSpinner.getValue();
             saveSettings();
             logMessage("Buffer size updated to " + bufferSize + " bytes");
@@ -1193,7 +1193,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         SpinnerNumberModel connTimeoutModel = new SpinnerNumberModel(connectionTimeoutSec, 1, 300, 1); // 1-300 seconds
         connectionTimeoutSpinner = new JSpinner(connTimeoutModel);
-        connectionTimeoutSpinner.addChangeListener(e -> {
+        connectionTimeoutSpinner.addChangeListener(_ -> {
             connectionTimeoutSec = (Integer) connectionTimeoutSpinner.getValue();
             saveSettings();
             logMessage("Connection timeout updated to " + connectionTimeoutSec + " seconds");
@@ -1209,7 +1209,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         SpinnerNumberModel socketTimeoutModel = new SpinnerNumberModel(socketTimeoutSec, 1, 300, 1); // 1-300 seconds
         socketTimeoutSpinner = new JSpinner(socketTimeoutModel);
-        socketTimeoutSpinner.addChangeListener(e -> {
+        socketTimeoutSpinner.addChangeListener(_ -> {
             socketTimeoutSec = (Integer) socketTimeoutSpinner.getValue();
             saveSettings();
             logMessage("Socket timeout updated to " + socketTimeoutSec + " seconds");
@@ -1225,7 +1225,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         SpinnerNumberModel maxRetryModel = new SpinnerNumberModel(maxRetryCount, 0, 10, 1); // 0-10 retries
         maxRetrySpinner = new JSpinner(maxRetryModel);
-        maxRetrySpinner.addChangeListener(e -> {
+        maxRetrySpinner.addChangeListener(_ -> {
             maxRetryCount = (Integer) maxRetrySpinner.getValue();
             saveSettings();
             logMessage("Max retry count updated to " + maxRetryCount);
@@ -1241,7 +1241,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         SpinnerNumberModel maxThreadsModel = new SpinnerNumberModel(maxServiceThreads, 5, 200, 5); // 5-200 threads
         maxThreadsSpinner = new JSpinner(maxThreadsModel);
-        maxThreadsSpinner.addChangeListener(e -> {
+        maxThreadsSpinner.addChangeListener(_ -> {
             maxServiceThreads = (Integer) maxThreadsSpinner.getValue();
             saveSettings();
             logMessage("Max service threads updated to " + maxServiceThreads);
@@ -1257,7 +1257,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         enableLoggingCheckbox = new JCheckBox();
         enableLoggingCheckbox.setSelected(loggingEnabled);
-        enableLoggingCheckbox.addActionListener(e -> {
+        enableLoggingCheckbox.addActionListener(_ -> {
             loggingEnabled = enableLoggingCheckbox.isSelected();
             saveSettings();
             logMessage("Logging " + (loggingEnabled ? "enabled" : "disabled"));

@@ -441,7 +441,7 @@ public class SocksProxyService {
      */
     private void connectAndRelay(Socket clientSocket, OutputStream clientOut, 
                                String targetHost, int targetPort, int socksVersion, byte addressType) throws IOException {
-        InputStream clientIn = clientSocket.getInputStream();
+        //InputStream clientIn = clientSocket.getInputStream();
         Socket proxySocket = null;
         
         // Choose random proxy and attempt connection with retries
