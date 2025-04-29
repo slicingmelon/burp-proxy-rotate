@@ -392,7 +392,7 @@ public class SocksProxyService {
         
         if (command != 1) {
             // Only support CONNECT command (1)
-            sendSocks4ErrorResponse(clientOut, (byte) 91); // Rejected/Failed
+            sendSocks4ErrorResponse(clientOut, (byte) 91);
             logError("Unsupported SOCKS4 command: " + command);
             return;
         }
@@ -654,9 +654,9 @@ public class SocksProxyService {
         
         // All attempts failed
         if (socksVersion == 5) {
-            sendSocks5ErrorResponse(clientOut, (byte) 1); // General failure
+            sendSocks5ErrorResponse(clientOut, (byte) 1);
         } else {
-            sendSocks4ErrorResponse(clientOut, (byte) 91); // Rejected/Failed
+            sendSocks4ErrorResponse(clientOut, (byte) 91);
         }
         logError("All connection attempts failed for target: " + targetHost + ":" + targetPort);
     }
@@ -693,7 +693,6 @@ public class SocksProxyService {
             proxyToClient.join(socketTimeout); // Only wait socket timeout duration 
             activeRelayThreads.remove(proxyToClient);
             
-            // If threads are still alive after the timeout, interrupt them
             if (clientToProxy.isAlive()) {
                 clientToProxy.interrupt();
             }
@@ -702,18 +701,16 @@ public class SocksProxyService {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            // Interrupt both threads if we're interrupted
+
             clientToProxy.interrupt();
             proxyToClient.interrupt();
         } finally {
-            // Always remove threads from tracking
+
             activeRelayThreads.remove(clientToProxy);
             activeRelayThreads.remove(proxyToClient);
             
             // Always close sockets when done
             closeSocketQuietly(proxySocket);
-            
-            // Note: We don't close the client socket here as it's managed by the caller
         }
     }
 
@@ -739,16 +736,13 @@ public class SocksProxyService {
                     out.flush();
                 }
             } catch (IOException e) {
-                // Normal when connection closes
                 if (serverRunning) {
                     logInfo("Relay ended: " + description + " - " + e.getMessage());
                 }
             } catch (Exception e) {
-                // Catch any other exceptions to prevent thread leaks
                 logError("Unexpected error in relay thread: " + e.getMessage());
             } finally {
-                // Don't close sockets here, they're managed by the caller
-                // But make sure we notify the parent thread by interrupting if needed
+
                 Thread parent = Thread.currentThread();
                 if (!parent.isInterrupted()) {
                     parent.interrupt();
@@ -828,13 +822,12 @@ public class SocksProxyService {
                 // Disable keep-alive to help prevent lingering connections
                 socket.setKeepAlive(false);
                 
-                // Set linger to 0 to force immediate closure instead of waiting
+                // Linger to 0 to force immediate closure instead of waiting
                 socket.setSoLinger(true, 0);
                 
-                // Set shorter timeouts to help sockets close faster
+                // Sshorter timeouts to help sockets close faster
                 socket.setSoTimeout(100);
                 
-                // Shutdown input/output streams first
                 try {
                     socket.shutdownInput();
                 } catch (IOException e) {
@@ -847,7 +840,6 @@ public class SocksProxyService {
                     // Ignore - socket might already be half-closed
                 }
                 
-                // Finally close the socket
                 socket.close();
             } catch (IOException e) {
                 logError("Error closing socket: " + e.getMessage());

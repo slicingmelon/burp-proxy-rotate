@@ -127,14 +127,14 @@ public class BurpSocksRotate implements BurpExtension {
                 String[] parts = proxy.split(":");
                 if (parts.length >= 2) {
                     try {
-                        String protocol = "socks5"; // Default
+                        String protocol = "socks5";
                         String host;
                         int port;
                         
                         if (parts.length >= 3 && parts[0].startsWith("socks")) {
                             // Format: socks5://host:port
                             protocol = parts[0];
-                            host = parts[1].substring(2); // Remove //
+                            host = parts[1].substring(2);
                             port = Integer.parseInt(parts[2].trim());
                         } else {
                             // Legacy format: host:port
