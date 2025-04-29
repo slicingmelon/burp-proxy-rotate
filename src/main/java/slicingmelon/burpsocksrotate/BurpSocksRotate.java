@@ -1,5 +1,5 @@
 /**
- * Burp SOCKS Proxy Rotator
+ * Burp SOCKS Proxy Rotate
  * 
  * This extension routes each HTTP request through a different SOCKS proxy from a provided list.
  */
@@ -91,7 +91,7 @@ public class BurpSocksRotate implements BurpExtension {
     @Override
     public void initialize(MontoyaApi api) {
         this.api = api;
-        api.extension().setName("Burp SOCKS Proxy Rotator");
+        api.extension().setName("Burp SOCKS Rotate");
         
         // Initialize proxy list
         proxyList = new ArrayList<>();
@@ -106,14 +106,14 @@ public class BurpSocksRotate implements BurpExtension {
         // Create and register the UI
         SwingUtilities.invokeLater(() -> {
             JComponent panel = createUserInterface();
-            api.userInterface().registerSuiteTab("SOCKS Rotator", panel);
+            api.userInterface().registerSuiteTab("SOCKS Rotate", panel);
             updateServerButtons();
         });
         
         // Add shutdown hook
         api.extension().registerUnloadingHandler(this::shutdown);
         
-        logMessage("SOCKS Proxy Rotator extension loaded successfully");
+        logMessage("Burp SOCKS Proxy Rotate extension loaded successfully");
     }
     
     /**
@@ -578,12 +578,12 @@ public class BurpSocksRotate implements BurpExtension {
             SwingUtilities.invokeLater(() -> {
                 updateServerButtons();
                 JOptionPane.showMessageDialog(null,
-                    "SOCKS Proxy Rotator started on localhost:" + portToUse + "\n\n" +
+                    "Burp SOCKS Rotate started on localhost:" + portToUse + "\n\n" +
                     "To use it:\n" +
                     "1. Go to Burp Settings > Network > Connections > SOCKS Proxy\n" +
                     "2. Check 'Use SOCKS proxy'\n" +
                     "3. Set Host to 'localhost' and Port to '" + portToUse + "'\n\n" +
-                    "The rotator will route each request through a different active SOCKS proxy from your list.",
+                    "Burp SOCKS Rotate Proxy Service will route each request through a different active SOCKS proxy from your list.",
                     "Proxy Server Started",
                     JOptionPane.INFORMATION_MESSAGE);
             });
@@ -613,15 +613,21 @@ public class BurpSocksRotate implements BurpExtension {
                 maxConnectionsPerProxy
             );
             
-            // Set up a timer to update stats every 2 seconds if logging is enabled
-            if (loggingEnabled && statsLabel != null) {
+            // Set up a timer to update stats less frequently (5 seconds instead of 2)
+            if (statsLabel != null) {
                 if (statsUpdateTimer == null) {
-                    statsUpdateTimer = new javax.swing.Timer(2000, _ -> {
+                    statsUpdateTimer = new javax.swing.Timer(5000, _ -> {
                         if (socksProxyService != null && socksProxyService.isRunning()) {
                             String stats = socksProxyService.getConnectionPoolStats();
                             statsLabel.setText(stats);
+                            
+                            // Only log stats when there's significant activity and logging is enabled
                             if (loggingEnabled) {
-                                logMessage(stats);
+                                int activeConnections = socksProxyService.getActiveConnectionCount();
+                                // Only log if more than 5 connections or every 30 seconds
+                                if (activeConnections > 5 || (System.currentTimeMillis() / 1000) % 30 == 0) {
+                                    logMessage(stats);
+                                }
                             }
                         }
                     });
@@ -644,10 +650,10 @@ public class BurpSocksRotate implements BurpExtension {
      * Stops the proxy server.
      */
     private void stopProxyServer() {
-        logMessage("Stopping SOCKS Proxy Rotator server...");
+        logMessage("Stopping Burp SOCKS Rotate server...");
         socksProxyService.stop();
         updateServerButtons();
-        logMessage("SOCKS Proxy Rotator server stopped.");
+        logMessage("Burp SOCKS Rotate server stopped.");
 
         if (statsUpdateTimer != null && statsUpdateTimer.isRunning()) {
             statsUpdateTimer.stop();
@@ -678,7 +684,7 @@ public class BurpSocksRotate implements BurpExtension {
             stopProxyServer();
         }
         saveProxies();
-        logMessage("SOCKS Proxy Rotator extension shut down.");
+        logMessage("Burp SOCKS Rotate extension shut down.");
 
         if (statsUpdateTimer != null && statsUpdateTimer.isRunning()) {
             statsUpdateTimer.stop();

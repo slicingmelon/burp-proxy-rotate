@@ -153,7 +153,7 @@ public class SocksProxyService {
             try {
                 serverSocket = new ServerSocket(localPort);
                 serverRunning = true;
-                logInfo("SOCKS Proxy Rotator server started on localhost:" + localPort);
+                logInfo("Burp SOCKS Rotate server started on localhost:" + localPort);
                 
                 // Signal success
                 onSuccess.run();
@@ -205,7 +205,7 @@ public class SocksProxyService {
             return;
         }
 
-        logInfo("Stopping SOCKS Proxy Rotator server...");
+        logInfo("Burp SOCKS Rotate server stopping...");
         serverRunning = false;
         
         // First, close the server socket to prevent new connections
@@ -277,7 +277,7 @@ public class SocksProxyService {
         threadPool = null;
         serverThread = null;
 
-        logInfo("SOCKS Proxy Rotator server stopped.");
+        logInfo("Burp SOCKS Rotate server stopped.");
     }
 
     /**
@@ -907,18 +907,34 @@ public class SocksProxyService {
         
         // Add proxy-specific stats if there are active connections
         if (!connectionsPerProxy.isEmpty()) {
-            stats.append(" | Proxies: ");
-            boolean first = true;
+            // Count proxies with active connections
+            int activeProxyCount = 0;
+            int maxConnectionsOnSingleProxy = 0;
+            String busiestProxy = "";
             
             for (String proxyKey : connectionsPerProxy.keySet()) {
                 int count = connectionsPerProxy.get(proxyKey).get();
                 if (count > 0) {
-                    if (!first) {
-                        stats.append(", ");
+                    activeProxyCount++;
+                    if (count > maxConnectionsOnSingleProxy) {
+                        maxConnectionsOnSingleProxy = count;
+                        busiestProxy = proxyKey;
                     }
-                    stats.append(proxyKey).append("(").append(count).append(")");
-                    first = false;
                 }
+            }
+            
+            // Add summary instead of full details
+            stats.append(" | Using ")
+                 .append(activeProxyCount)
+                 .append(" proxies");
+            
+            // If we have a busy proxy, mention it
+            if (maxConnectionsOnSingleProxy > 2) {
+                stats.append(", busiest: ")
+                     .append(busiestProxy)
+                     .append("(")
+                     .append(maxConnectionsOnSingleProxy)
+                     .append(")");
             }
         }
         

@@ -1,4 +1,4 @@
-# Burp SOCKS Proxy Rotator
+# Burp SOCKS Rotate
 
 A high-performance Burp Suite extension that routes HTTP/HTTPS requests through a rotating SOCKS proxy from a configured list.
 
