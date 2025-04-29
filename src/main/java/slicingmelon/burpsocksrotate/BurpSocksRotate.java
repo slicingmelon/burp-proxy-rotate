@@ -51,7 +51,7 @@ public class BurpSocksRotate implements BurpExtension {
     private static final String PROXY_HOST_PORT_REGEX = "^([^:]+):(\\d+)$";
     
     // Configuration 
-    private int configuredLocalPort = 0; // 0 means auto-select a random port
+    private int configuredLocalPort = 0;
     
     // Settings with defaults
     private int bufferSize = 8092; // 8KB
