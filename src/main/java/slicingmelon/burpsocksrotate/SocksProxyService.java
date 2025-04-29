@@ -9,10 +9,15 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.function.Consumer;
 
@@ -40,6 +45,12 @@ public class SocksProxyService {
     private ExecutorService threadPool;
     private volatile boolean serverRunning = false;
     private int localPort;
+    
+    // Connection tracking
+    private final Set<Socket> activeClientSockets = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private final Set<Socket> activeProxySockets = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private final Set<Thread> activeRelayThreads = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private final AtomicInteger activeConnectionCount = new AtomicInteger(0);
     
     // Reference to main extension for UI callbacks
     private BurpSocksRotate extension;
@@ -90,6 +101,13 @@ public class SocksProxyService {
     }
 
     /**
+     * Gets the number of active connections.
+     */
+    public int getActiveConnectionCount() {
+        return activeConnectionCount.get();
+    }
+
+    /**
      * Starts the SOCKS proxy rotation service.
      */
     public void start(int port, Runnable onSuccess, Consumer<String> onFailure) {
@@ -116,7 +134,21 @@ public class SocksProxyService {
                     try {
                         Socket clientSocket = serverSocket.accept();
                         clientSocket.setSoTimeout(socketTimeout);
-                        threadPool.execute(() -> handleConnection(clientSocket));
+                        
+                        // Track this client socket
+                        activeClientSockets.add(clientSocket);
+                        activeConnectionCount.incrementAndGet();
+                        
+                        threadPool.execute(() -> {
+                            try {
+                                handleConnection(clientSocket);
+                            } finally {
+                                // Cleanup after connection handling is done
+                                closeSocketQuietly(clientSocket);
+                                activeClientSockets.remove(clientSocket);
+                                activeConnectionCount.decrementAndGet();
+                            }
+                        });
                     } catch (IOException e) {
                         if (serverRunning) {
                             logError("Error accepting connection: " + e.getMessage());
@@ -145,8 +177,10 @@ public class SocksProxyService {
             return;
         }
 
+        logInfo("Stopping SOCKS Proxy Rotator server...");
         serverRunning = false;
-
+        
+        // First, close the server socket to prevent new connections
         try {
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
@@ -155,15 +189,69 @@ public class SocksProxyService {
         } catch (IOException e) {
             logError("Error closing server socket: " + e.getMessage());
         }
-
+        
+        // Shutdown the thread pool and wait a bit for tasks to complete
         if (threadPool != null) {
-            threadPool.shutdownNow();
+            threadPool.shutdown();
+            try {
+                // Wait for tasks to complete, but don't wait forever
+                if (!threadPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                    logInfo("Forcing thread pool shutdown...");
+                    threadPool.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                threadPool.shutdownNow();
+            }
             logInfo("Thread pool shut down.");
         }
 
+        // Interrupt all relay threads
+        for (Thread thread : new ArrayList<>(activeRelayThreads)) {
+            try {
+                thread.interrupt();
+            } catch (Exception e) {
+                // Ignore - just trying to clean up
+            }
+        }
+        activeRelayThreads.clear();
+
+        // Close all active client sockets
+        int closedClientSockets = 0;
+        for (Socket socket : new ArrayList<>(activeClientSockets)) {
+            try {
+                socket.close();
+                closedClientSockets++;
+            } catch (IOException e) {
+                // Ignore - just trying to clean up
+            }
+        }
+        activeClientSockets.clear();
+        
+        // Close all active proxy sockets
+        int closedProxySockets = 0;
+        for (Socket socket : new ArrayList<>(activeProxySockets)) {
+            try {
+                socket.close();
+                closedProxySockets++;
+            } catch (IOException e) {
+                // Ignore - just trying to clean up
+            }
+        }
+        activeProxySockets.clear();
+        
+        // Reset active connection count
+        activeConnectionCount.set(0);
+        
+        logInfo("Closed " + closedClientSockets + " client socket(s) and " + closedProxySockets + " proxy socket(s).");
+        
+        // Clean up final resources
         if (serverThread != null && serverThread.isAlive()) {
             try {
-                serverThread.join(1000);
+                serverThread.join(2000);
+                if (serverThread.isAlive()) {
+                    serverThread.interrupt();
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -342,6 +430,7 @@ public class SocksProxyService {
                                 int socksVersion, byte addressType) throws IOException {
         InputStream clientIn = clientSocket.getInputStream();
         OutputStream clientOut = clientSocket.getOutputStream();
+        Socket proxySocket = null;
         
         // Choose random proxy and attempt connection with retries
         for (int attempt = 0; attempt <= maxRetryCount; attempt++) {
@@ -362,8 +451,6 @@ public class SocksProxyService {
                     " for target: " + targetHost + ":" + targetPort + 
                     (attempt > 0 ? " (attempt " + (attempt + 1) + ")" : ""));
             
-            Socket proxySocket = null;
-            
             try {
                 // Create a new connection to the SOCKS proxy
                 proxySocket = new Socket();
@@ -372,6 +459,10 @@ public class SocksProxyService {
                 proxySocket.setTcpNoDelay(true); // Disable Nagle's algorithm
                 proxySocket.setReceiveBufferSize(bufferSize);
                 proxySocket.setSendBufferSize(bufferSize);
+                proxySocket.setKeepAlive(true); // Enable TCP keepalive
+                
+                // Track this proxy socket
+                activeProxySockets.add(proxySocket);
                 
                 InputStream proxyIn = proxySocket.getInputStream();
                 OutputStream proxyOut = proxySocket.getOutputStream();
@@ -547,7 +638,11 @@ public class SocksProxyService {
                 // Don't mark proxy as inactive here - only manual validation should do this
                 
                 // Close this proxy socket and try another
-                closeSocketQuietly(proxySocket);
+                if (proxySocket != null) {
+                    closeSocketQuietly(proxySocket);
+                    activeProxySockets.remove(proxySocket);
+                    proxySocket = null;
+                }
             }
         }
         
@@ -568,6 +663,10 @@ public class SocksProxyService {
         Thread clientToProxy = createRelayThread(clientSocket, proxySocket, "client -> proxy");
         Thread proxyToClient = createRelayThread(proxySocket, clientSocket, "proxy -> client");
         
+        // Add to the active relay threads set for tracking
+        activeRelayThreads.add(clientToProxy);
+        activeRelayThreads.add(proxyToClient);
+        
         // Start the threads
         clientToProxy.start();
         proxyToClient.start();
@@ -575,14 +674,25 @@ public class SocksProxyService {
         // Wait for both threads to finish
         try {
             clientToProxy.join();
+            activeRelayThreads.remove(clientToProxy);
+            
             proxyToClient.join();
+            activeRelayThreads.remove(proxyToClient);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            // Interrupt both threads if we're interrupted
+            clientToProxy.interrupt();
+            proxyToClient.interrupt();
+        } finally {
+            // Always remove threads from tracking
+            activeRelayThreads.remove(clientToProxy);
+            activeRelayThreads.remove(proxyToClient);
+            
+            // Always close both sockets when done
+            closeSocketQuietly(proxySocket);
+            activeProxySockets.remove(proxySocket);
+            // Note: We don't close the client socket here as it's managed by the caller
         }
-        
-        // Always close both sockets when done
-        closeSocketQuietly(proxySocket);
-        closeSocketQuietly(clientSocket);
     }
 
     /**
@@ -597,12 +707,19 @@ public class SocksProxyService {
                 InputStream in = source.getInputStream();
                 OutputStream out = destination.getOutputStream();
                 
-                while ((bytesRead = in.read(buffer)) != -1) {
+                while (!Thread.currentThread().isInterrupted() && 
+                       !source.isClosed() && !destination.isClosed() && 
+                       (bytesRead = in.read(buffer)) != -1) {
                     out.write(buffer, 0, bytesRead);
                     out.flush();
                 }
             } catch (IOException e) {
                 // Normal when connection closes
+                if (serverRunning) {
+                    logInfo("Relay ended: " + description + " - " + e.getMessage());
+                }
+            } finally {
+                // Don't close sockets here, they're managed by the caller
             }
         }, "Relay-" + description);
     }
@@ -675,6 +792,18 @@ public class SocksProxyService {
      */
     private void closeSocketQuietly(Socket socket) {
         if (socket != null && !socket.isClosed()) {
+            try {
+                socket.shutdownInput();
+            } catch (IOException e) {
+                // Ignore
+            }
+            
+            try {
+                socket.shutdownOutput();
+            } catch (IOException e) {
+                // Ignore
+            }
+            
             try {
                 socket.close();
             } catch (IOException e) {
