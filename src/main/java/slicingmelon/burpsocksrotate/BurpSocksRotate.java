@@ -579,7 +579,7 @@ public class BurpSocksRotate implements BurpExtension {
             }
         }
         // If we can't find a random port, try the default as a fallback
-        return 1080;
+        return 13560;
     }
 
     /**
