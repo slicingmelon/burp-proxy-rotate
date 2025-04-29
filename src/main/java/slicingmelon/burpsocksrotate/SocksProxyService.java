@@ -27,11 +27,11 @@ import java.util.function.Consumer;
  */
 public class SocksProxyService {
     // Default settings
-    private int bufferSize = 16384; // 16KB
-    private int connectionTimeout = 30000; // 30 seconds
-    private int socketTimeout = 60000; // 60 seconds
+    private int bufferSize = 4096; // 4KB - reduced from 16KB for better concurrency
+    private int connectionTimeout = 10000; // 10 seconds - reduced from 30 seconds
+    private int socketTimeout = 30000; // 30 seconds - reduced from 60 seconds
     private int maxRetryCount = 2; // Number of proxies to try before giving up
-    private int maxThreads = 20; // Maximum number of threads
+    private int maxThreads = 50; // Increased from 20 to 50 to handle more concurrent connections
     private int maxConnectionsPerProxy = 10; // Maximum connections per proxy
     private int idleTimeoutSec = 60; // Idle timeout in seconds
     
@@ -673,17 +673,33 @@ public class SocksProxyService {
         activeRelayThreads.add(clientToProxy);
         activeRelayThreads.add(proxyToClient);
         
+        // Set daemon status to true so these threads don't prevent JVM shutdown
+        clientToProxy.setDaemon(true);
+        proxyToClient.setDaemon(true);
+        
+        // Lower priority slightly to favor thread pool handling
+        clientToProxy.setPriority(Thread.NORM_PRIORITY - 1);
+        proxyToClient.setPriority(Thread.NORM_PRIORITY - 1);
+        
         // Start the threads
         clientToProxy.start();
         proxyToClient.start();
         
-        // Wait for both threads to finish
+        // Wait for both threads to finish with a reasonable timeout
         try {
-            clientToProxy.join();
+            clientToProxy.join(socketTimeout); // Only wait socket timeout duration
             activeRelayThreads.remove(clientToProxy);
             
-            proxyToClient.join();
+            proxyToClient.join(socketTimeout); // Only wait socket timeout duration 
             activeRelayThreads.remove(proxyToClient);
+            
+            // If threads are still alive after the timeout, interrupt them
+            if (clientToProxy.isAlive()) {
+                clientToProxy.interrupt();
+            }
+            if (proxyToClient.isAlive()) {
+                proxyToClient.interrupt();
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             // Interrupt both threads if we're interrupted
@@ -694,7 +710,7 @@ public class SocksProxyService {
             activeRelayThreads.remove(clientToProxy);
             activeRelayThreads.remove(proxyToClient);
             
-            // Always close both sockets when done
+            // Always close sockets when done
             closeSocketQuietly(proxySocket);
             
             // Note: We don't close the client socket here as it's managed by the caller
@@ -713,6 +729,9 @@ public class SocksProxyService {
                 InputStream in = source.getInputStream();
                 OutputStream out = destination.getOutputStream();
                 
+                // Add read timeout to prevent threads from hanging
+                source.setSoTimeout(socketTimeout / 2);
+                
                 while (!Thread.currentThread().isInterrupted() && 
                        !source.isClosed() && !destination.isClosed() && 
                        (bytesRead = in.read(buffer)) != -1) {
@@ -724,8 +743,16 @@ public class SocksProxyService {
                 if (serverRunning) {
                     logInfo("Relay ended: " + description + " - " + e.getMessage());
                 }
+            } catch (Exception e) {
+                // Catch any other exceptions to prevent thread leaks
+                logError("Unexpected error in relay thread: " + e.getMessage());
             } finally {
                 // Don't close sockets here, they're managed by the caller
+                // But make sure we notify the parent thread by interrupting if needed
+                Thread parent = Thread.currentThread();
+                if (!parent.isInterrupted()) {
+                    parent.interrupt();
+                }
             }
         }, "Relay-" + description);
     }
@@ -798,21 +825,32 @@ public class SocksProxyService {
     private void closeSocketQuietly(Socket socket) {
         if (socket != null && !socket.isClosed()) {
             try {
-                socket.shutdownInput();
-            } catch (IOException e) {
-                // Ignore
-            }
-            
-            try {
-                socket.shutdownOutput();
-            } catch (IOException e) {
-                // Ignore
-            }
-            
-            try {
+                // Disable keep-alive to help prevent lingering connections
+                socket.setKeepAlive(false);
+                
+                // Set linger to 0 to force immediate closure instead of waiting
+                socket.setSoLinger(true, 0);
+                
+                // Set shorter timeouts to help sockets close faster
+                socket.setSoTimeout(100);
+                
+                // Shutdown input/output streams first
+                try {
+                    socket.shutdownInput();
+                } catch (IOException e) {
+                    // Ignore - socket might already be half-closed
+                }
+                
+                try {
+                    socket.shutdownOutput();
+                } catch (IOException e) {
+                    // Ignore - socket might already be half-closed
+                }
+                
+                // Finally close the socket
                 socket.close();
             } catch (IOException e) {
-                // Ignore
+                logError("Error closing socket: " + e.getMessage());
             }
         }
     }

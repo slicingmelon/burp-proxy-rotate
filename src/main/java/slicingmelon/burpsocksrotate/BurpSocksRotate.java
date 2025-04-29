@@ -52,11 +52,11 @@ public class BurpSocksRotate implements BurpExtension {
     private int configuredLocalPort = 1080;
     
     // Settings with defaults
-    private int bufferSize = 16384; // 16KB
-    private int connectionTimeoutSec = 30; // 30 seconds
-    private int socketTimeoutSec = 60; // 60 seconds
+    private int bufferSize = 4096; // 4KB - reduced from 16KB for better concurrency
+    private int connectionTimeoutSec = 10; // 10 seconds - reduced from 30 seconds
+    private int socketTimeoutSec = 30; // 30 seconds - reduced from 60 seconds
     private int maxRetryCount = 2;
-    private int maxServiceThreads = 20;
+    private int maxServiceThreads = 50; // Increased from 20 to 50 to handle more concurrent connections
     private boolean loggingEnabled = true;
     
     // UI components for settings
