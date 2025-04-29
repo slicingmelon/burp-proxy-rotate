@@ -13,15 +13,15 @@ public class ProxyEntry {
     public ProxyEntry(String host, int port) {
         this.host = host;
         this.port = port;
-        this.active = true; // Assume active until validated
+        this.active = true;
         this.errorMessage = "";
-        this.protocol = "socks5"; // Default to SOCKS5
+        this.protocol = "socks5";
     }
 
     public ProxyEntry(String host, int port, String protocol) {
         this.host = host;
         this.port = port;
-        this.active = true; // Assume active until validated
+        this.active = true;
         this.errorMessage = "";
         this.protocol = protocol != null ? protocol.toLowerCase() : "socks5";
     }

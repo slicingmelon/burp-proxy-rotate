@@ -34,7 +34,6 @@ public class SocksProxyService {
     private int maxConnectionsPerProxy = 50; // Maximum connections per proxy
     private int idleTimeoutSec = 60; // Idle timeout in seconds
     
-    // Dependencies
     private final Logging logging;
     private final List<ProxyEntry> proxyList;
     private final ReadWriteLock proxyListLock;
@@ -52,10 +51,8 @@ public class SocksProxyService {
     private final Set<Thread> activeRelayThreads = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final AtomicInteger activeConnectionCount = new AtomicInteger(0);
     
-    // Track connections per proxy
     private final ConcurrentHashMap<String, AtomicInteger> connectionsPerProxy = new ConcurrentHashMap<>();
     
-    // Reference to main extension for UI callbacks
     private BurpSocksRotate extension;
 
     /**
@@ -145,7 +142,7 @@ public class SocksProxyService {
         // - Creates new threads as needed for concurrent connections
         // - Reuses idle threads when available 
         // - Removes threads that are idle for 60 seconds
-        // - Allows for better scaling with bursty traffic
+        // - Hopefully scales better with high traffic
         threadPool = Executors.newCachedThreadPool();
 
         serverThread = new Thread(() -> {
@@ -214,11 +211,9 @@ public class SocksProxyService {
             logError("Error closing server socket: " + e.getMessage());
         }
         
-        // Shutdown the thread pool and wait a bit for tasks to complete
         if (threadPool != null) {
             threadPool.shutdown();
             try {
-                // Wait for tasks to complete, but don't wait forever
                 if (!threadPool.awaitTermination(5, TimeUnit.SECONDS)) {
                     logInfo("Forcing thread pool shutdown...");
                     threadPool.shutdownNow();
@@ -251,16 +246,11 @@ public class SocksProxyService {
             }
         }
         activeClientSockets.clear();
-        
-        // Reset active connection count
         activeConnectionCount.set(0);
-        
-        // Clear connection tracking
         connectionsPerProxy.clear();
         
         logInfo("Closed " + closedClientSockets + " client socket(s).");
         
-        // Clean up final resources
         if (serverThread != null && serverThread.isAlive()) {
             try {
                 serverThread.join(2000);
@@ -410,9 +400,7 @@ public class SocksProxyService {
         String targetHost;
         if (ipv4[0] == 0 && ipv4[1] == 0 && ipv4[2] == 0 && ipv4[3] != 0) {
             // SOCKS4A - domain name is specified
-            // Skip user ID
             while (clientIn.read() != 0) {
-                // Skip bytes until 0
             }
             
             // Read domain
@@ -428,7 +416,6 @@ public class SocksProxyService {
                         (ipv4[2] & 0xff) + "." + (ipv4[3] & 0xff);
             
             while (clientIn.read() != 0) {
-                // Skip bytes until 0
             }
         }
         
@@ -476,7 +463,7 @@ public class SocksProxyService {
                 
                 // Track the connection to this proxy
                 selectedProxyKey = proxyKey;
-                connectionsPerProxy.computeIfAbsent(proxyKey, k -> new AtomicInteger(0))
+                connectionsPerProxy.computeIfAbsent(proxyKey, _ -> new AtomicInteger(0))
                                   .incrementAndGet();
                 
                 InputStream proxyIn = proxySocket.getInputStream();
@@ -675,15 +662,12 @@ public class SocksProxyService {
         Thread clientToProxy = createRelayThread(clientSocket, proxySocket, "client -> proxy");
         Thread proxyToClient = createRelayThread(proxySocket, clientSocket, "proxy -> client");
         
-        // Add to the active relay threads set for tracking
         activeRelayThreads.add(clientToProxy);
         activeRelayThreads.add(proxyToClient);
         
-        // Set daemon status to true so these threads don't prevent JVM shutdown
         clientToProxy.setDaemon(true);
         proxyToClient.setDaemon(true);
         
-        // Lower priority slightly to favor thread pool handling
         clientToProxy.setPriority(Thread.NORM_PRIORITY - 1);
         proxyToClient.setPriority(Thread.NORM_PRIORITY - 1);
         
@@ -717,7 +701,6 @@ public class SocksProxyService {
             // Always close sockets when done
             closeSocketQuietly(proxySocket);
             
-            // Decrease connection count for this proxy
             if (proxyKey != null) {
                 AtomicInteger count = connectionsPerProxy.get(proxyKey);
                 if (count != null) {
@@ -802,7 +785,6 @@ public class SocksProxyService {
             return null;
         }
         
-        // Select a random proxy from eligible ones
         return eligibleProxies.get(random.nextInt(eligibleProxies.size()));
     }
 
@@ -902,9 +884,7 @@ public class SocksProxyService {
         stats.append("Active connections: ").append(activeConnectionCount.get())
              .append(", Relay threads: ").append(activeRelayThreads.size());
         
-        // Add proxy-specific stats if there are active connections
         if (!connectionsPerProxy.isEmpty()) {
-            // Count proxies with active connections
             int activeProxyCount = 0;
             int maxConnectionsOnSingleProxy = 0;
             String busiestProxy = "";
@@ -920,12 +900,11 @@ public class SocksProxyService {
                 }
             }
             
-            // Add summary instead of full details
+            // Add summary 
             stats.append(" | Using ")
                  .append(activeProxyCount)
                  .append(" proxies");
             
-            // If we have a busy proxy, mention it
             if (maxConnectionsOnSingleProxy > 2) {
                 stats.append(", busiest: ")
                      .append(busiestProxy)
