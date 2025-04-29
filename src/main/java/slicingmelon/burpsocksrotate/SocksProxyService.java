@@ -135,7 +135,7 @@ public class SocksProxyService {
      */
     public void start(int port, Runnable onSuccess, Consumer<String> onFailure) {
         if (serverRunning) {
-            logInfo("Server is already running.");
+            logInfo("Service is already running.");
             return;
         }
 
@@ -180,7 +180,7 @@ public class SocksProxyService {
                     }
                 }
             } catch (IOException e) {
-                logError("Error starting server: " + e.getMessage());
+                logError("Error starting service: " + e.getMessage());
                 serverRunning = false;
                 onFailure.accept(e.getMessage());
             } finally {
@@ -197,7 +197,7 @@ public class SocksProxyService {
      */
     public void stop() {
         if (!serverRunning) {
-            logInfo("Server is not running.");
+            logInfo("Service is not running.");
             return;
         }
 
@@ -254,6 +254,9 @@ public class SocksProxyService {
         
         // Reset active connection count
         activeConnectionCount.set(0);
+        
+        // Clear connection tracking
+        connectionsPerProxy.clear();
         
         logInfo("Closed " + closedClientSockets + " client socket(s).");
         

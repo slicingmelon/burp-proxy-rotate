@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
+import java.util.Random;
 
 /**
  * Main Burp extension class for SOCKS proxy rotation.
@@ -40,16 +42,16 @@ public class BurpSocksRotate implements BurpExtension {
     // UI components
     private ProxyTableModel proxyTableModel;
     private JTextArea logTextArea;
-    private JButton startServerButton;
-    private JButton stopServerButton;
-    private JTextField portField;
+    private JButton enableButton;
+    private JButton disableButton;
+    private JLabel statusLabel;
     
     // Regular expression for proxy format validation
     private static final String PROXY_URL_REGEX = "^(socks[45])://([^:]+):(\\d+)$";
     private static final String PROXY_HOST_PORT_REGEX = "^([^:]+):(\\d+)$";
     
     // Configuration 
-    private int configuredLocalPort = 1080;
+    private int configuredLocalPort = 0; // 0 means auto-select a random port
     
     // Settings with defaults
     private int bufferSize = 8092; // 8KB
@@ -270,24 +272,27 @@ public class BurpSocksRotate implements BurpExtension {
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         
         JPanel serverControls = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        serverControls.add(new JLabel("Local Port:"));
         
-        portField = new JTextField(String.valueOf(configuredLocalPort), 5);
-        serverControls.add(portField);
+        enableButton = new JButton("Enable SOCKS Rotate");
+        enableButton.addActionListener(_ -> enableSocksRotate());
+        serverControls.add(enableButton);
         
-        startServerButton = new JButton("Start Proxy Server");
-        startServerButton.addActionListener(_ -> startProxyServer());
-        serverControls.add(startServerButton);
+        disableButton = new JButton("Disable SOCKS Rotate");
+        disableButton.addActionListener(_ -> disableSocksRotate());
+        disableButton.setEnabled(false);
+        serverControls.add(disableButton);
         
-        stopServerButton = new JButton("Stop Proxy Server");
-        stopServerButton.addActionListener(_ -> stopProxyServer());
-        stopServerButton.setEnabled(false);
-        serverControls.add(stopServerButton);
-        
-        // Add a stats label
-        statsLabel = new JLabel("Connection pool not active");
+        // Add a status label with green/red color for success/failure
+        statusLabel = new JLabel("SOCKS Rotate service not active");
+        statusLabel.setForeground(Color.GRAY);
+        statusLabel.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(Color.LIGHT_GRAY),
+            BorderFactory.createEmptyBorder(4, 8, 4, 8)
+        ));
+        statusLabel.setOpaque(true);
+        statusLabel.setBackground(new Color(245, 245, 245)); // Light gray background
         JPanel statsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        statsPanel.add(statsLabel);
+        statsPanel.add(statusLabel);
         
         controlPanel.add(serverControls);
         controlPanel.add(statsPanel);
@@ -535,17 +540,60 @@ public class BurpSocksRotate implements BurpExtension {
     }
     
     /**
-     * Starts the proxy server.
+     * Updates Burp Suite's SOCKS proxy settings to use our local proxy.
      */
-    private void startProxyServer() {
+    private void updateBurpSocksSettings(String host, int port, boolean useProxy) {
+        try {
+            // Reconstruct settings in JSON format
+            String socksHostJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"host\":\"" + host + "\"}}}}";
+            String socksPortJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"port\":" + port + "}}}}";
+            String useProxyJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"use_proxy\":" + useProxy + "}}}}";
+            String useDnsJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"dns_over_socks\":false}}}}";
+            
+            // Import settings into Burp
+            api.burpSuite().importUserOptionsFromJson(socksHostJson);
+            api.burpSuite().importUserOptionsFromJson(socksPortJson);
+            api.burpSuite().importUserOptionsFromJson(useProxyJson);
+            api.burpSuite().importUserOptionsFromJson(useDnsJson);
+            
+            logMessage("Burp SOCKS proxy settings updated: " + (useProxy ? "enabled" : "disabled") + 
+                      (useProxy ? ", using localhost:" + port : ""));
+        } catch (Exception e) {
+            logMessage("Error updating Burp SOCKS settings: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Finds an available port to use.
+     */
+    private int findAvailablePort() {
+        // Try to use a port in the range 10000-65000 to avoid conflicts
+        Random random = new Random();
+        for (int i = 0; i < 20; i++) { // Try up to 20 times
+            int port = 10000 + random.nextInt(55000);
+            try (ServerSocket socket = new ServerSocket(port)) {
+                // If we can bind to it, it's available
+                return port;
+            } catch (IOException e) {
+                // Port is in use, try another one
+            }
+        }
+        // If we can't find a random port, try the default as a fallback
+        return 1080;
+    }
+
+    /**
+     * Enables the SOCKS rotation service.
+     */
+    private void enableSocksRotate() {
         proxyListLock.readLock().lock();
         boolean hasActiveProxy;
         try {
             hasActiveProxy = proxyList.stream().anyMatch(ProxyEntry::isActive);
             if (proxyList.isEmpty() || !hasActiveProxy) {
                 JOptionPane.showMessageDialog(null,
-                    proxyList.isEmpty() ? "Please add at least one proxy before starting the server." : 
-                    "Please add or validate at least one proxy before starting the server.",
+                    proxyList.isEmpty() ? "Please add at least one proxy before enabling the service." : 
+                    "Please add or validate at least one proxy before enabling the service.",
                     "No Active Proxies",
                     JOptionPane.WARNING_MESSAGE);
                 return;
@@ -554,35 +602,29 @@ public class BurpSocksRotate implements BurpExtension {
             proxyListLock.readLock().unlock();
         }
 
-        // Read port from UI
-        int portToUse;
-        try {
-            portToUse = Integer.parseInt(portField.getText().trim());
-            if (portToUse <= 0 || portToUse > 65535) {
-                throw new NumberFormatException("Port out of range");
-            }
-            configuredLocalPort = portToUse;
-            saveProxies();
-        } catch (NumberFormatException e) {
-            JOptionPane.showMessageDialog(null, 
-                "Invalid port number. Please enter a number between 1-65535.",
-                "Invalid Port", 
-                JOptionPane.ERROR_MESSAGE);
-            return;
-        }
+        // Use a random port to avoid conflicts
+        int portToUse = findAvailablePort();
+        configuredLocalPort = portToUse;
+        saveProxies();
         
         // Define callbacks for success and failure
         Runnable onSuccessCallback = () -> {
             SwingUtilities.invokeLater(() -> {
                 updateServerButtons();
+                
+                // Update Burp's SOCKS proxy settings to use our local proxy
+                updateBurpSocksSettings("localhost", portToUse, true);
+                
+                // Update status label
+                statusLabel.setText("SOCKS Rotate service active on port " + portToUse);
+                statusLabel.setForeground(new Color(0, 150, 0)); // Dark green
+                statusLabel.setBackground(new Color(235, 255, 235)); // Light green background
+                
                 JOptionPane.showMessageDialog(null,
-                    "Burp SOCKS Rotate started on localhost:" + portToUse + "\n\n" +
-                    "To use it:\n" +
-                    "1. Go to Burp Settings > Network > Connections > SOCKS Proxy\n" +
-                    "2. Check 'Use SOCKS proxy'\n" +
-                    "3. Set Host to 'localhost' and Port to '" + portToUse + "'\n\n" +
+                    "Burp SOCKS Rotate enabled on port " + portToUse + "\n\n" +
+                    "Burp's SOCKS proxy settings have been automatically updated to use the service.\n\n" +
                     "Burp SOCKS Rotate Proxy Service will route each request through a different active SOCKS proxy from your list.",
-                    "Proxy Server Started",
+                    "SOCKS Rotate Enabled",
                     JOptionPane.INFORMATION_MESSAGE);
             });
         };
@@ -590,9 +632,15 @@ public class BurpSocksRotate implements BurpExtension {
         Consumer<String> onFailureCallback = (errorMessage) -> {
             SwingUtilities.invokeLater(() -> {
                 logMessage("Proxy service failed to start: " + errorMessage);
+                
+                // Update status label to show error
+                statusLabel.setText("Failed to start: " + errorMessage);
+                statusLabel.setForeground(Color.RED);
+                statusLabel.setBackground(new Color(255, 235, 235)); // Light red background
+                
                 JOptionPane.showMessageDialog(null, 
-                    "Failed to start proxy server: " + errorMessage,
-                    "Server Error", 
+                    "Failed to enable SOCKS Rotate: " + errorMessage,
+                    "Service Error", 
                     JOptionPane.ERROR_MESSAGE);
                 updateServerButtons();
             });
@@ -600,7 +648,7 @@ public class BurpSocksRotate implements BurpExtension {
 
         // Start the proxy service with callbacks
         try {
-            logMessage("Attempting to start SOCKS proxy service on port " + portToUse + "...");
+            logMessage("Enabling Burp SOCKS Rotate service on port " + portToUse + "...");
             
             // Initialize service with current settings
             socksProxyService.setSettings(
@@ -634,23 +682,33 @@ public class BurpSocksRotate implements BurpExtension {
             
             socksProxyService.start(portToUse, onSuccessCallback, onFailureCallback);
         } catch (Exception ex) {
-            logMessage("Unexpected error trying to initiate proxy service start: " + ex.getMessage());
+            logMessage("Unexpected error trying to enable SOCKS Rotate: " + ex.getMessage());
             JOptionPane.showMessageDialog(null,
-                "An unexpected error occurred trying to start the proxy service: " + ex.getMessage(),
-                "Start Error",
+                "An unexpected error occurred: " + ex.getMessage(),
+                "Error",
                 JOptionPane.ERROR_MESSAGE);
             updateServerButtons();
         }
     }
     
     /**
-     * Stops the proxy server.
+     * Disables the SOCKS rotation service.
      */
-    private void stopProxyServer() {
-        logMessage("Stopping Burp SOCKS Rotate server...");
+    private void disableSocksRotate() {
+        logMessage("Disabling Burp SOCKS Rotate service...");
+        
+        // First update Burp's SOCKS proxy settings to disable the proxy
+        updateBurpSocksSettings("localhost", configuredLocalPort, false);
+        
+        // Now stop the service
         socksProxyService.stop();
         updateServerButtons();
-        logMessage("Burp SOCKS Rotate server stopped.");
+        logMessage("Burp SOCKS Rotate service stopped.");
+        
+        // Update status label
+        statusLabel.setText("SOCKS Rotate service not active");
+        statusLabel.setForeground(Color.GRAY);
+        statusLabel.setBackground(new Color(245, 245, 245)); // Light gray background
 
         if (statsUpdateTimer != null && statsUpdateTimer.isRunning()) {
             statsUpdateTimer.stop();
@@ -662,11 +720,10 @@ public class BurpSocksRotate implements BurpExtension {
      */
     private void updateServerButtons() {
         SwingUtilities.invokeLater(() -> {
-            if (startServerButton != null && stopServerButton != null && portField != null) {
+            if (enableButton != null && disableButton != null) {
                 boolean running = socksProxyService != null && socksProxyService.isRunning();
-                startServerButton.setEnabled(!running);
-                stopServerButton.setEnabled(running);
-                portField.setEnabled(!running);
+                enableButton.setEnabled(!running);
+                disableButton.setEnabled(running);
             }
         });
     }
@@ -678,7 +735,7 @@ public class BurpSocksRotate implements BurpExtension {
         logMessage("Extension unloading. Stopping proxy service...");
          
         if (socksProxyService != null) {
-            stopProxyServer();
+            disableSocksRotate();
         }
         saveProxies();
         logMessage("Burp SOCKS Rotate extension shut down.");
