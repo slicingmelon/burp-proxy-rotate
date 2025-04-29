@@ -358,7 +358,7 @@ public class SocksProxyService {
             }
             
             String proxyKey = proxy.getHost() + ":" + proxy.getPort();
-            logInfo("Selected proxy: " + proxyKey + 
+            logInfo("Selected proxy: " + proxy.getProtocol() + "://" + proxyKey + 
                     " for target: " + targetHost + ":" + targetPort + 
                     (attempt > 0 ? " (attempt " + (attempt + 1) + ")" : ""));
             
@@ -376,7 +376,9 @@ public class SocksProxyService {
                 InputStream proxyIn = proxySocket.getInputStream();
                 OutputStream proxyOut = proxySocket.getOutputStream();
                 
-                if (socksVersion == 5) {
+                int proxyProtocolVersion = proxy.getProtocolVersion();
+                
+                if (proxyProtocolVersion == 5) {
                     // SOCKS5 to proxy
                     
                     // Send greeting
@@ -485,7 +487,7 @@ public class SocksProxyService {
                     // Send success to client
                     sendSocks5SuccessResponse(clientOut);
                     
-                } else if (socksVersion == 4) {
+                } else if (proxyProtocolVersion == 4) {
                     // SOCKS4 to proxy
                     
                     // Send connection request
@@ -539,7 +541,7 @@ public class SocksProxyService {
                 return;
                 
             } catch (IOException e) {
-                logError("Connection through proxy " + proxy.getHost() + ":" + proxy.getPort() + 
+                logError("Connection through proxy " + proxy.getProtocol() + "://" + proxy.getHost() + ":" + proxy.getPort() + 
                          " failed: " + e.getMessage());
                 
                 // Don't mark proxy as inactive here - only manual validation should do this
@@ -607,9 +609,11 @@ public class SocksProxyService {
 
     /**
      * Selects a random active proxy.
+     * Tries to match the requested SOCKS protocol version if possible.
      */
     private ProxyEntry selectRandomActiveProxy() {
         List<ProxyEntry> activeProxies = new ArrayList<>();
+        List<ProxyEntry> matchingProxies = new ArrayList<>();
         
         proxyListLock.readLock().lock();
         try {

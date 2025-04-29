@@ -8,12 +8,22 @@ public class ProxyEntry {
     private final int port;
     private boolean active;
     private String errorMessage;
+    private String protocol; // Either "socks4" or "socks5"
 
     public ProxyEntry(String host, int port) {
         this.host = host;
         this.port = port;
         this.active = true; // Assume active until validated
         this.errorMessage = "";
+        this.protocol = "socks5"; // Default to SOCKS5
+    }
+
+    public ProxyEntry(String host, int port, String protocol) {
+        this.host = host;
+        this.port = port;
+        this.active = true; // Assume active until validated
+        this.errorMessage = "";
+        this.protocol = protocol != null ? protocol.toLowerCase() : "socks5";
     }
 
     public String getHost() {
@@ -38,5 +48,20 @@ public class ProxyEntry {
 
     public void setErrorMessage(String errorMessage) {
         this.errorMessage = errorMessage;
+    }
+    
+    public String getProtocol() {
+        return protocol;
+    }
+    
+    public void setProtocol(String protocol) {
+        this.protocol = protocol;
+    }
+    
+    /**
+     * Get the protocol version as an integer (4 or 5)
+     */
+    public int getProtocolVersion() {
+        return "socks4".equals(protocol) ? 4 : 5;
     }
 } 

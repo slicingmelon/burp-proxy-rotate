@@ -44,6 +44,10 @@ public class BurpSocksRotate implements BurpExtension {
     private JButton stopServerButton;
     private JTextField portField;
     
+    // Regular expression for proxy format validation
+    private static final String PROXY_URL_REGEX = "^(socks[45])://([^:]+):(\\d+)$";
+    private static final String PROXY_HOST_PORT_REGEX = "^([^:]+):(\\d+)$";
+    
     // Configuration 
     private int configuredLocalPort = 1080;
     
@@ -110,14 +114,27 @@ public class BurpSocksRotate implements BurpExtension {
             String[] proxies = savedProxies.split("\n");
             for (String proxy : proxies) {
                 String[] parts = proxy.split(":");
-                if (parts.length == 2) {
+                if (parts.length >= 2) {
                     try {
-                        String host = parts[0].trim();
-                        int port = Integer.parseInt(parts[1].trim());
+                        String protocol = "socks5"; // Default
+                        String host;
+                        int port;
+                        
+                        if (parts.length >= 3 && parts[0].startsWith("socks")) {
+                            // Format: socks5://host:port
+                            protocol = parts[0];
+                            host = parts[1].substring(2); // Remove //
+                            port = Integer.parseInt(parts[2].trim());
+                        } else {
+                            // Legacy format: host:port
+                            host = parts[0].trim();
+                            port = Integer.parseInt(parts[1].trim());
+                        }
+                        
                         if (!host.isEmpty() && port > 0 && port <= 65535) {
                             proxyListLock.writeLock().lock();
                             try {
-                                proxyList.add(new ProxyEntry(host, port));
+                                proxyList.add(new ProxyEntry(host, port, protocol));
                             } finally {
                                 proxyListLock.writeLock().unlock();
                             }
@@ -201,7 +218,9 @@ public class BurpSocksRotate implements BurpExtension {
         proxyListLock.readLock().lock();
         try {
             for (ProxyEntry entry : proxyList) {
-                sb.append(entry.getHost()).append(":").append(entry.getPort()).append("\n");
+                sb.append(entry.getProtocol()).append("://")
+                  .append(entry.getHost()).append(":")
+                  .append(entry.getPort()).append("\n");
             }
         } finally {
             proxyListLock.readLock().unlock();
@@ -261,6 +280,8 @@ public class BurpSocksRotate implements BurpExtension {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(5, 5, 5, 5);
         
+        JLabel protocolLabel = new JLabel("Protocol:");
+        JComboBox<String> protocolCombo = new JComboBox<>(new String[]{"socks5", "socks4"});
         JLabel hostLabel = new JLabel("Host:");
         JTextField hostField = new JTextField(15);
         JLabel portLabel = new JLabel("Port:");
@@ -270,24 +291,31 @@ public class BurpSocksRotate implements BurpExtension {
         
         gbc.gridx = 0;
         gbc.gridy = 0;
-        inputPanel.add(hostLabel, gbc);
+        inputPanel.add(protocolLabel, gbc);
         
         gbc.gridx = 1;
-        inputPanel.add(hostField, gbc);
+        inputPanel.add(protocolCombo, gbc);
         
         gbc.gridx = 2;
-        inputPanel.add(portLabel, gbc);
+        inputPanel.add(hostLabel, gbc);
         
         gbc.gridx = 3;
-        inputPanel.add(addPortField, gbc);
+        inputPanel.add(hostField, gbc);
         
         gbc.gridx = 4;
-        inputPanel.add(addButton, gbc);
+        inputPanel.add(portLabel, gbc);
         
         gbc.gridx = 5;
+        inputPanel.add(addPortField, gbc);
+        
+        gbc.gridx = 6;
+        inputPanel.add(addButton, gbc);
+        
+        gbc.gridx = 7;
         inputPanel.add(validateAllButton, gbc);
         
         addButton.addActionListener(e -> {
+            String protocol = (String) protocolCombo.getSelectedItem();
             String host = hostField.getText().trim();
             String portText = addPortField.getText().trim();
             
@@ -303,7 +331,7 @@ public class BurpSocksRotate implements BurpExtension {
                     return;
                 }
                 
-                ProxyEntry proxy = new ProxyEntry(host, port);
+                ProxyEntry proxy = new ProxyEntry(host, port, protocol);
                 addProxy(proxy);
                 
                 // Validate the newly added proxy
@@ -325,11 +353,11 @@ public class BurpSocksRotate implements BurpExtension {
         // Bulk add panel
         JPanel bulkPanel = new JPanel(new BorderLayout(5, 5));
         JTextArea bulkTextArea = new JTextArea(5, 30);
-        bulkTextArea.setToolTipText("Enter one proxy per line in format host:port");
+        bulkTextArea.setToolTipText("Enter one proxy per line in format socks5://host:port or socks4://host:port");
         JScrollPane bulkScrollPane = new JScrollPane(bulkTextArea);
         JButton bulkAddButton = new JButton("Add Multiple Proxies");
         
-        bulkPanel.add(new JLabel("Add multiple proxies (format: host:port, one per line):"), BorderLayout.NORTH);
+        bulkPanel.add(new JLabel("Add multiple proxies (format: socks5://host:port, one per line):"), BorderLayout.NORTH);
         bulkPanel.add(bulkScrollPane, BorderLayout.CENTER);
         bulkPanel.add(bulkAddButton, BorderLayout.SOUTH);
         
@@ -342,6 +370,7 @@ public class BurpSocksRotate implements BurpExtension {
             String[] lines = bulk.split("\n");
             int added = 0;
             List<ProxyEntry> proxiesToAdd = new ArrayList<>();
+            List<String> invalidLines = new ArrayList<>();
 
             for (String line : lines) {
                 line = line.trim();
@@ -349,22 +378,16 @@ public class BurpSocksRotate implements BurpExtension {
                     continue;
                 }
                 
-                String[] parts = line.split(":");
-                if (parts.length != 2) {
-                    logMessage("Skipping invalid bulk entry: " + line);
-                    continue;
-                }
-                
                 try {
-                    String host = parts[0].trim();
-                    int port = Integer.parseInt(parts[1].trim());
-                    
-                    if (!host.isEmpty() && port > 0 && port <= 65535) {
+                    ProxyEntry proxy = parseProxyUrl(line);
+                    if (proxy != null) {
                         boolean exists = false;
                         proxyListLock.readLock().lock();
                         try {
                             for (ProxyEntry existing : proxyList) {
-                                if (existing.getHost().equalsIgnoreCase(host) && existing.getPort() == port) {
+                                if (existing.getHost().equalsIgnoreCase(proxy.getHost()) && 
+                                    existing.getPort() == proxy.getPort() &&
+                                    existing.getProtocol().equals(proxy.getProtocol())) {
                                     exists = true;
                                     break;
                                 }
@@ -373,16 +396,30 @@ public class BurpSocksRotate implements BurpExtension {
                             proxyListLock.readLock().unlock();
                         }
                         if (!exists) {
-                            proxiesToAdd.add(new ProxyEntry(host, port));
+                            proxiesToAdd.add(proxy);
                         } else {
-                            logMessage("Skipping duplicate proxy: " + host + ":" + port);
+                            logMessage("Skipping duplicate proxy: " + proxy.getProtocol() + "://" + proxy.getHost() + ":" + proxy.getPort());
                         }
                     } else {
-                        logMessage("Skipping invalid bulk entry (host/port): " + line);
+                        invalidLines.add(line);
                     }
-                } catch (NumberFormatException ex) {
-                    logMessage("Skipping invalid bulk entry (port format): " + line);
+                } catch (Exception ex) {
+                    invalidLines.add(line);
                 }
+            }
+
+            // Display errors for invalid lines
+            if (!invalidLines.isEmpty()) {
+                StringBuilder errorMsg = new StringBuilder("Invalid proxy format in the following lines:\n");
+                for (int i = 0; i < Math.min(5, invalidLines.size()); i++) {
+                    errorMsg.append(" - ").append(invalidLines.get(i)).append("\n");
+                }
+                if (invalidLines.size() > 5) {
+                    errorMsg.append(" - ... and ").append(invalidLines.size() - 5).append(" more\n");
+                }
+                errorMsg.append("\nExpected format: socks5://host:port or socks4://host:port");
+                
+                JOptionPane.showMessageDialog(null, errorMsg.toString(), "Invalid Proxy Format", JOptionPane.ERROR_MESSAGE);
             }
 
             // Add collected proxies in one go
@@ -700,7 +737,7 @@ public class BurpSocksRotate implements BurpExtension {
      * Table model for displaying proxies.
      */
     private class ProxyTableModel extends AbstractTableModel {
-        private final String[] columnNames = {"Host", "Port", "Status"};
+        private final String[] columnNames = {"Protocol", "Host", "Port", "Status"};
         
         @Override
         public int getRowCount() {
@@ -736,9 +773,10 @@ public class BurpSocksRotate implements BurpExtension {
 
             if (entry != null) {
                 switch (columnIndex) {
-                    case 0: return entry.getHost();
-                    case 1: return entry.getPort();
-                    case 2:
+                    case 0: return entry.getProtocol();
+                    case 1: return entry.getHost();
+                    case 2: return entry.getPort();
+                    case 3:
                         String status = entry.isActive() ? "Active" : "Inactive";
                         String error = entry.getErrorMessage();
                         return status + (error != null && !error.isEmpty() ? ": " + error : "");
@@ -750,7 +788,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         @Override
         public Class<?> getColumnClass(int columnIndex) {
-            if (columnIndex == 1) return Integer.class;
+            if (columnIndex == 2) return Integer.class;
             return String.class;
         }
     }
@@ -875,7 +913,7 @@ public class BurpSocksRotate implements BurpExtension {
      * Validates a single proxy.
      */
     private boolean validateProxy(ProxyEntry proxy, int maxAttempts) {
-        logMessage("Validating proxy: " + proxy.getHost() + ":" + proxy.getPort());
+        logMessage("Validating proxy: " + proxy.getProtocol() + "://" + proxy.getHost() + ":" + proxy.getPort());
         proxy.setErrorMessage("Validating...");
         updateProxyTable();
 
@@ -892,26 +930,65 @@ public class BurpSocksRotate implements BurpExtension {
                 OutputStream out = socket.getOutputStream();
                 InputStream in = socket.getInputStream();
                 
-                // Send SOCKS5 greeting (No Auth)
-                out.write(new byte[]{0x05, 0x01, 0x00});
-                out.flush();
+                // Send greeting based on protocol
+                int protocolVersion = proxy.getProtocolVersion();
                 
-                byte[] response = new byte[2];
-                int bytesRead = in.read(response);
-                
-                if (bytesRead == 2 && response[0] == 0x05 && response[1] == 0x00) {
-                    logMessage("Proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
-                    success = true;
-                    finalErrorMessage = "";
-                    break;
-                } else if (bytesRead > 0 && response[0] == 'H') {
-                    finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
-                    logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
-                             " - " + finalErrorMessage);
-                    break;
-                } else {
-                    finalErrorMessage = "Invalid SOCKS response";
-                    logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+                if (protocolVersion == 5) {
+                    // SOCKS5 greeting (No Auth)
+                    out.write(new byte[]{0x05, 0x01, 0x00});
+                    out.flush();
+                    
+                    byte[] response = new byte[2];
+                    int bytesRead = in.read(response);
+                    
+                    if (bytesRead == 2 && response[0] == 0x05 && response[1] == 0x00) {
+                        logMessage("SOCKS5 proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
+                        success = true;
+                        finalErrorMessage = "";
+                        break;
+                    } else if (bytesRead > 0 && response[0] == 'H') {
+                        finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
+                        logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
+                                 " - " + finalErrorMessage);
+                        break;
+                    } else {
+                        finalErrorMessage = "Invalid SOCKS5 response";
+                        logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+                    }
+                } else if (protocolVersion == 4) {
+                    // SOCKS4 doesn't have a simple handshake we can use to just test the connection
+                    // We have to send a connect request to a real host
+                    
+                    // Send a request to connect to a test host (e.g., google.com:80)
+                    // This is just a test connect, we're not actually going to use the connection
+                    out.write(new byte[] {
+                        0x04, // SOCKS version
+                        0x01, // CONNECT command
+                        0x00, 0x50, // Port 80 (web)
+                        0x08, 0x08, 0x08, 0x08, // IP 8.8.8.8 (Google DNS)
+                        0x00  // User ID (empty)
+                    });
+                    out.flush();
+                    
+                    byte[] response = new byte[8];
+                    int bytesRead = in.read(response);
+                    
+                    // We just want to verify we get a SOCKS4 response, not that it succeeds
+                    if (bytesRead == 8 && response[0] == 0x00) {
+                        // This is a SOCKS4 proxy - even if it returns an error code, we know it speaks SOCKS4
+                        logMessage("SOCKS4 proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
+                        success = true;
+                        finalErrorMessage = "";
+                        break;
+                    } else if (bytesRead > 0 && response[0] == 'H') {
+                        finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
+                        logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
+                                 " - " + finalErrorMessage);
+                        break;
+                    } else {
+                        finalErrorMessage = "Invalid SOCKS4 response";
+                        logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+                    }
                 }
             } catch (IOException e) {
                 finalErrorMessage = e.getMessage();
@@ -941,6 +1018,55 @@ public class BurpSocksRotate implements BurpExtension {
         updateProxyTable();
 
         return success;
+    }
+    
+    /**
+     * Parse a proxy URL string into a ProxyEntry object.
+     * Accepts formats like:
+     * - socks5://host:port
+     * - socks4://host:port
+     * - host:port (defaults to socks5)
+     * 
+     * @param proxyUrl the proxy URL string
+     * @return a ProxyEntry object or null if the format is invalid
+     */
+    private ProxyEntry parseProxyUrl(String proxyUrl) {
+        if (proxyUrl == null || proxyUrl.trim().isEmpty()) {
+            return null;
+        }
+        
+        // Check if the URL has protocol specification
+        if (proxyUrl.startsWith("socks")) {
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(PROXY_URL_REGEX);
+            java.util.regex.Matcher matcher = pattern.matcher(proxyUrl);
+            
+            if (matcher.matches()) {
+                String protocol = matcher.group(1);
+                String host = matcher.group(2);
+                int port = Integer.parseInt(matcher.group(3));
+                
+                // Validate port range
+                if (port > 0 && port <= 65535) {
+                    return new ProxyEntry(host, port, protocol);
+                }
+            }
+        } else {
+            // Try the legacy format host:port
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(PROXY_HOST_PORT_REGEX);
+            java.util.regex.Matcher matcher = pattern.matcher(proxyUrl);
+            
+            if (matcher.matches()) {
+                String host = matcher.group(1);
+                int port = Integer.parseInt(matcher.group(2));
+                
+                // Validate port range
+                if (port > 0 && port <= 65535) {
+                    return new ProxyEntry(host, port, "socks5"); // Default to socks5
+                }
+            }
+        }
+        
+        return null;
     }
 
     /**
