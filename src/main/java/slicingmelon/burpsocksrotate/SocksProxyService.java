@@ -141,11 +141,10 @@ public class SocksProxyService {
 
         this.localPort = port;
         
-        // Create a cached thread pool that:
+        // Cached thread pool implementation
         // - Creates new threads as needed for concurrent connections
         // - Reuses idle threads when available 
         // - Removes threads that are idle for 60 seconds
-        // - Is not bound by maxServiceThreads (which is now just a guideline)
         // - Allows for better scaling with bursty traffic
         threadPool = Executors.newCachedThreadPool();
 
@@ -155,7 +154,6 @@ public class SocksProxyService {
                 serverRunning = true;
                 logInfo("Burp SOCKS Rotate server started on localhost:" + localPort);
                 
-                // Signal success
                 onSuccess.run();
 
                 while (serverRunning && !serverSocket.isClosed()) {
@@ -163,7 +161,6 @@ public class SocksProxyService {
                         Socket clientSocket = serverSocket.accept();
                         clientSocket.setSoTimeout(socketTimeout);
                         
-                        // Track this client socket
                         activeClientSockets.add(clientSocket);
                         activeConnectionCount.incrementAndGet();
                         
@@ -171,7 +168,6 @@ public class SocksProxyService {
                             try {
                                 handleConnection(clientSocket);
                             } finally {
-                                // Cleanup after connection handling is done
                                 closeSocketQuietly(clientSocket);
                                 activeClientSockets.remove(clientSocket);
                                 activeConnectionCount.decrementAndGet();
@@ -382,7 +378,6 @@ public class SocksProxyService {
         clientIn.read(portBytes);
         targetPort = ((portBytes[0] & 0xff) << 8) | (portBytes[1] & 0xff);
         
-        // Connect to target through random proxy
         connectAndRelay(clientSocket, clientOut, targetHost, targetPort, 5, addressType);
     }
 
@@ -429,7 +424,6 @@ public class SocksProxyService {
             targetHost = (ipv4[0] & 0xff) + "." + (ipv4[1] & 0xff) + "." + 
                         (ipv4[2] & 0xff) + "." + (ipv4[3] & 0xff);
             
-            // Skip user ID
             while (clientIn.read() != 0) {
                 // Skip bytes until 0
             }
