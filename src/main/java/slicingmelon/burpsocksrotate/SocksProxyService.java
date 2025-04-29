@@ -21,16 +21,13 @@ import java.util.function.Consumer;
  * For each new connection, a different active SOCKS proxy is chosen.
  */
 public class SocksProxyService {
-    // Core settings - increased for better performance
-    private static final int BUFFER_SIZE = 16384; // 16KB
-    //private static final int BUFFER_SIZE = 32768; // Increased buffer size (32KB)
-    //private static final int BUFFER_SIZE = 65536; // 64KB
-    //private static final int BUFFER_SIZE = 131072 ; // 128KB
-    private static final int CONNECTION_TIMEOUT = 30000; // 30 seconds
-    private static final int SOCKET_TIMEOUT = 60000; // 60 seconds
-    private static final int MAX_RETRY_COUNT = 2; // Number of proxies to try before giving up
-
-    private static final int MAX_THREADS = 20; // Maximum number of threads
+    // Default settings
+    private int bufferSize = 16384; // 16KB
+    private int connectionTimeout = 30000; // 30 seconds
+    private int socketTimeout = 60000; // 60 seconds
+    private int maxRetryCount = 2; // Number of proxies to try before giving up
+    private int maxThreads = 20; // Maximum number of threads
+    
     // Dependencies
     private final Logging logging;
     private final List<ProxyEntry> proxyList;
@@ -62,6 +59,21 @@ public class SocksProxyService {
     public void setExtension(BurpSocksRotate extension) {
         this.extension = extension;
     }
+    
+    /**
+     * Sets the service settings.
+     */
+    public void setSettings(int bufferSize, int connectionTimeout, int socketTimeout, int maxRetryCount, int maxThreads) {
+        this.bufferSize = bufferSize;
+        this.connectionTimeout = connectionTimeout;
+        this.socketTimeout = socketTimeout;
+        this.maxRetryCount = maxRetryCount;
+        this.maxThreads = maxThreads;
+        
+        logInfo("Settings updated: bufferSize=" + bufferSize + ", connectionTimeout=" + connectionTimeout + 
+                "ms, socketTimeout=" + socketTimeout + "ms, maxRetryCount=" + maxRetryCount + 
+                ", maxThreads=" + maxThreads);
+    }
 
     /**
      * Checks if the service is running.
@@ -89,7 +101,7 @@ public class SocksProxyService {
         this.localPort = port;
         
         // Create a thread pool with a reasonable number of threads
-        threadPool = Executors.newFixedThreadPool(MAX_THREADS); // Increased thread pool size
+        threadPool = Executors.newFixedThreadPool(maxThreads);
 
         serverThread = new Thread(() -> {
             try {
@@ -103,7 +115,7 @@ public class SocksProxyService {
                 while (serverRunning && !serverSocket.isClosed()) {
                     try {
                         Socket clientSocket = serverSocket.accept();
-                        clientSocket.setSoTimeout(SOCKET_TIMEOUT);
+                        clientSocket.setSoTimeout(socketTimeout);
                         threadPool.execute(() -> handleConnection(clientSocket));
                     } catch (IOException e) {
                         if (serverRunning) {
@@ -332,7 +344,7 @@ public class SocksProxyService {
         OutputStream clientOut = clientSocket.getOutputStream();
         
         // Choose random proxy and attempt connection with retries
-        for (int attempt = 0; attempt <= MAX_RETRY_COUNT; attempt++) {
+        for (int attempt = 0; attempt <= maxRetryCount; attempt++) {
             ProxyEntry proxy = selectRandomActiveProxy();
             
             if (proxy == null) {
@@ -355,11 +367,11 @@ public class SocksProxyService {
             try {
                 // Create a new connection to the SOCKS proxy
                 proxySocket = new Socket();
-                proxySocket.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()), CONNECTION_TIMEOUT);
-                proxySocket.setSoTimeout(SOCKET_TIMEOUT);
+                proxySocket.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()), connectionTimeout);
+                proxySocket.setSoTimeout(socketTimeout);
                 proxySocket.setTcpNoDelay(true); // Disable Nagle's algorithm
-                proxySocket.setReceiveBufferSize(BUFFER_SIZE);
-                proxySocket.setSendBufferSize(BUFFER_SIZE);
+                proxySocket.setReceiveBufferSize(bufferSize);
+                proxySocket.setSendBufferSize(bufferSize);
                 
                 InputStream proxyIn = proxySocket.getInputStream();
                 OutputStream proxyOut = proxySocket.getOutputStream();
@@ -576,7 +588,7 @@ public class SocksProxyService {
      */
     private Thread createRelayThread(Socket source, Socket destination, String description) {
         return new Thread(() -> {
-            byte[] buffer = new byte[BUFFER_SIZE];
+            byte[] buffer = new byte[bufferSize];
             int bytesRead;
             
             try {
