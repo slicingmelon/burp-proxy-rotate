@@ -1203,7 +1203,7 @@ public class BurpSocksRotate implements BurpExtension {
         controlsPanel.add(new JLabel("Connection Timeout (sec):"), gbc);
         
         connectionTimeoutSpinner = new JSpinner(new SpinnerNumberModel(connectionTimeoutSec, 1, 300, 1));
-        connectionTimeoutSpinner.addChangeListener(e -> {
+        connectionTimeoutSpinner.addChangeListener(_ -> {
             connectionTimeoutSec = (Integer) connectionTimeoutSpinner.getValue();
             saveSettings();
             logMessage("Connection timeout updated to " + connectionTimeoutSec + " seconds");
@@ -1218,7 +1218,7 @@ public class BurpSocksRotate implements BurpExtension {
         controlsPanel.add(new JLabel("Socket Timeout (sec):"), gbc);
         
         socketTimeoutSpinner = new JSpinner(new SpinnerNumberModel(socketTimeoutSec, 10, 3600, 10));
-        socketTimeoutSpinner.addChangeListener(e -> {
+        socketTimeoutSpinner.addChangeListener(_ -> {
             socketTimeoutSec = (Integer) socketTimeoutSpinner.getValue();
             saveSettings();
             logMessage("Socket timeout updated to " + socketTimeoutSec + " seconds");
@@ -1233,7 +1233,7 @@ public class BurpSocksRotate implements BurpExtension {
         controlsPanel.add(new JLabel("Max Retry Count:"), gbc);
         
         maxRetrySpinner = new JSpinner(new SpinnerNumberModel(maxRetryCount, 0, 10, 1));
-        maxRetrySpinner.addChangeListener(e -> {
+        maxRetrySpinner.addChangeListener(_ -> {
             maxRetryCount = (Integer) maxRetrySpinner.getValue();
             saveSettings();
             logMessage("Max retry count updated to " + maxRetryCount);
@@ -1248,7 +1248,7 @@ public class BurpSocksRotate implements BurpExtension {
         controlsPanel.add(new JLabel("Max Connections Per Proxy:"), gbc);
         
         maxConnectionsPerProxySpinner = new JSpinner(new SpinnerNumberModel(maxConnectionsPerProxy, 1, 500, 10));
-        maxConnectionsPerProxySpinner.addChangeListener(e -> {
+        maxConnectionsPerProxySpinner.addChangeListener(_ -> {
             maxConnectionsPerProxy = (Integer) maxConnectionsPerProxySpinner.getValue();
             saveSettings();
             logMessage("Max connections per proxy updated to " + maxConnectionsPerProxy);
@@ -1299,7 +1299,7 @@ public class BurpSocksRotate implements BurpExtension {
         JScrollPane bypassScrollPane = new JScrollPane(bypassDomainsTextArea);
         
         JButton updateDomainsButton = new JButton("Update Domains");
-        updateDomainsButton.addActionListener(e -> {
+        updateDomainsButton.addActionListener(_ -> {
             String domains = bypassDomainsTextArea.getText();
             updateBypassDomains(domains);
             logMessage("Bypass domains updated");

@@ -513,6 +513,24 @@ public class SocksProxyService {
                     // Update state to connected
                     state.stage = ConnectionStage.PROXY_CONNECTED;
                     
+                    // For direct connections, especially HTTPS, we need special handling
+                    // No handshake required - just start bidirectional data transfer
+                    Socket socket = proxyChannel.socket();
+                    
+                    // Configure socket for optimal SSL/TLS handling
+                    try {
+                        socket.setTcpNoDelay(true);
+                        socket.setKeepAlive(true);
+                        socket.setSoTimeout(0); // No timeout for HTTPS handshakes
+                        
+                        // Increase buffer sizes for SSL/TLS data
+                        socket.setReceiveBufferSize(65536);
+                        socket.setSendBufferSize(65536);
+                    } catch (Exception e) {
+                        // Log but continue if socket option setting fails
+                        logError("Error setting socket options for direct connection: " + e.getMessage());
+                    }
+                    
                     // Register for reading
                     proxyChannel.register(selector, SelectionKey.OP_READ);
                     
@@ -644,12 +662,27 @@ public class SocksProxyService {
                 // Forward data to the proxy
                 SocketChannel proxyChannel = proxyConnections.get(clientChannel);
                 if (proxyChannel != null && proxyChannel.isConnected()) {
-                    ByteBuffer forwardBuffer = ByteBuffer.allocate(buffer.remaining());
-                    forwardBuffer.put(buffer);
-                    forwardBuffer.flip();
-                    
-                    while (forwardBuffer.hasRemaining()) {
-                        proxyChannel.write(forwardBuffer);
+                    // Check if this is a direct connection to a Collaborator domain
+                    if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
+                        // For direct connections (especially HTTPS), we need to ensure efficient data handling
+                        try {
+                            // Write all data from buffer
+                            while (buffer.hasRemaining()) {
+                                proxyChannel.write(buffer);
+                            }
+                        } catch (IOException e) {
+                            logError("Error forwarding data to direct connection: " + e.getMessage());
+                            closeConnection(clientChannel);
+                        }
+                    } else {
+                        // Regular proxy forwarding
+                        ByteBuffer forwardBuffer = ByteBuffer.allocate(buffer.remaining());
+                        forwardBuffer.put(buffer);
+                        forwardBuffer.flip();
+                        
+                        while (forwardBuffer.hasRemaining()) {
+                            proxyChannel.write(forwardBuffer);
+                        }
                     }
                 }
                 break;
@@ -719,8 +752,19 @@ public class SocksProxyService {
                 break;
                 
             case PROXY_CONNECTED:
-                // Forward data to the client directly without creating additional buffers
-                clientChannel.write(buffer);
+                // Check if this is a direct connection to a Collaborator domain
+                if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
+                    // For HTTPS or other SSL/TLS traffic, directly write the buffer
+                    try {
+                        clientChannel.write(buffer);
+                    } catch (IOException e) {
+                        logError("Error forwarding data from direct connection: " + e.getMessage());
+                        closeConnection(clientChannel);
+                    }
+                } else {
+                    // Regular proxy forwarding without creating additional buffers
+                    clientChannel.write(buffer);
+                }
                 break;
                 
             default:
@@ -964,8 +1008,14 @@ public class SocksProxyService {
                 directChannel.configureBlocking(false);
                 Socket directSocket = directChannel.socket();
                 
-                // Set socket options
+                // Set socket options for better HTTPS compatibility
                 directSocket.setTcpNoDelay(true);
+                directSocket.setKeepAlive(true);
+                directSocket.setSoTimeout(0); // No timeout for HTTPS handshakes
+                
+                // Increase buffer sizes for SSL/TLS data
+                directSocket.setReceiveBufferSize(65536);
+                directSocket.setSendBufferSize(65536);
                 
                 // Associate the channels
                 proxyConnections.put(clientChannel, directChannel);
@@ -975,9 +1025,9 @@ public class SocksProxyService {
                 state.selectedProxy = directProxy;
                 
                 // Connect directly to the target
-                boolean connected = directChannel.connect(new InetSocketAddress(state.targetHost, state.targetPort));
-                
                 logInfo("Direct connection to collaborator domain: " + state.targetHost + ":" + state.targetPort);
+                
+                boolean connected = directChannel.connect(new InetSocketAddress(state.targetHost, state.targetPort));
                 
                 // If connected immediately, we need to handle the response appropriately
                 if (connected) {
@@ -993,9 +1043,12 @@ public class SocksProxyService {
                     
                     // Register for reading
                     directChannel.register(selector, SelectionKey.OP_READ);
+                    
+                    logInfo("Direct connection established immediately to " + state.targetHost + ":" + state.targetPort);
                 } else {
                     // Register for connect completion
                     directChannel.register(selector, SelectionKey.OP_CONNECT);
+                    logInfo("Direct connection pending to " + state.targetHost + ":" + state.targetPort);
                 }
                 
                 return;
