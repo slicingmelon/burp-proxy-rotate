@@ -91,6 +91,10 @@ public class SocksProxyService {
         }
     }
 
+    // Track the last used proxy to enforce rotation
+    private volatile int lastProxyIndex = -1;
+    private final Object proxyRotationLock = new Object();
+
     /**
      * Creates a new SocksProxyService.
      */
@@ -370,6 +374,9 @@ public class SocksProxyService {
         serverRunning = false;
         
         try {
+            // Reset the proxy rotation index
+            lastProxyIndex = -1;
+            
             // Close the selector to interrupt the selector thread
             if (selector != null) {
                 selector.wakeup();
@@ -917,15 +924,14 @@ public class SocksProxyService {
     }
 
     /**
-     * Connect to the target through a randomly selected proxy.
-     * Optimized to handle connection surges efficiently.
+     * Connect to the target through a selected proxy with guaranteed rotation.
      */
     private void connectToTarget(SocketChannel clientChannel, ConnectionState state) throws IOException {
-        // Choose random proxy without retry handling
-        // Note: Proxies are pre-validated so we don't need to verify them
+        // Choose a proxy using the rotation mechanism
         ProxyEntry proxy = selectRandomActiveProxy();
         
         if (proxy == null) {
+            logError("No active proxies available");
             if (state.socksVersion == 5) {
                 sendSocks5ErrorResponse(clientChannel, (byte) 1);
             } else {
@@ -937,7 +943,11 @@ public class SocksProxyService {
         
         String proxyKey = proxy.getHost() + ":" + proxy.getPort();
         
-        // Fast path: increment connection counter atomically
+        // Always log the proxy being used for this connection
+        logInfo("Using proxy: " + proxy.getProtocol() + "://" + proxyKey + 
+                " for target: " + state.targetHost + ":" + state.targetPort);
+        
+        // Increment connection counter
         connectionsPerProxy.computeIfAbsent(proxyKey, k -> new AtomicInteger(0)).incrementAndGet();
         
         // Save the selected proxy
@@ -949,10 +959,10 @@ public class SocksProxyService {
             proxyChannel.configureBlocking(false);
             Socket proxySocket = proxyChannel.socket();
             
-            // Set essential socket options only
+            // Set socket options
             proxySocket.setTcpNoDelay(true);
             
-            // Associate the channels in a thread-safe way
+            // Associate the channels
             proxyConnections.put(clientChannel, proxyChannel);
             
             // Connect to the proxy
@@ -968,6 +978,8 @@ public class SocksProxyService {
             }
             
         } catch (IOException e) {
+            logError("Error connecting to proxy " + proxyKey + ": " + e.getMessage());
+            
             // Clean up on error
             AtomicInteger count = connectionsPerProxy.get(proxyKey);
             if (count != null) {
@@ -1405,26 +1417,52 @@ public class SocksProxyService {
     }
     
     /**
-     * Cleans up idle connections.
+     * Cleans up idle connections and enforces connection rotation.
      */
     private void cleanupIdleConnections() {
         long currentTime = System.currentTimeMillis();
         long idleThreshold = idleTimeoutSec * 1000;
+        int closedCount = 0;
+        
+        // More aggressive idle connection timeouts to force new proxy selections
+        // We want to close connections even if they're still somewhat active
+        // This helps ensure different proxies are used for different requests
+        long moderatelyIdleThreshold = 10000; // 10 seconds - close moderately idle connections
         
         // Check client connections
         for (SocketChannel clientChannel : new ArrayList<>(lastActivityTime.keySet())) {
             Long lastActivity = lastActivityTime.get(clientChannel);
             
-            if (lastActivity != null && currentTime - lastActivity > idleThreshold) {
-                logInfo("Closing idle connection");
-                closeConnection(clientChannel);
+            if (lastActivity != null) {
+                long idleTime = currentTime - lastActivity;
+                
+                // Close completely idle connections
+                if (idleTime > idleThreshold) {
+                    logInfo("Closing idle connection");
+                    closeConnection(clientChannel);
+                    closedCount++;
+                }
+                // Also close moderately idle connections to force rotation
+                else if (idleTime > moderatelyIdleThreshold) {
+                    ConnectionState state = connectionStates.get(clientChannel);
+                    // Only close connections that are in connected state and have transferred data
+                    if (state != null && state.stage == ConnectionStage.PROXY_CONNECTED) {
+                        logInfo("Closing moderately idle connection to force rotation");
+                        closeConnection(clientChannel);
+                        closedCount++;
+                    }
+                }
             }
+        }
+        
+        if (closedCount > 0) {
+            logInfo("Closed " + closedCount + " connections to enforce proxy rotation");
         }
     }
     
     /**
-     * Selects a random active proxy with optimized performance during connection surges.
-     * Respects the maxConnectionsPerProxy limit.
+     * Selects a different proxy for each request to ensure proper rotation.
+     * Each call should return a different proxy than the previous call.
      */
     private ProxyEntry selectRandomActiveProxy() {
         // Fast path for empty proxy list
@@ -1432,50 +1470,38 @@ public class SocksProxyService {
             return null;
         }
         
-        // Use thread-local caching of active proxies to reduce lock contention
-        List<ProxyEntry> eligibleProxies = new ArrayList<>(Math.min(10, proxyList.size()));
-        List<ProxyEntry> anyActiveProxies = null;
+        List<ProxyEntry> activeProxies = new ArrayList<>();
         
+        // Get all active proxies
         proxyListLock.readLock().lock();
         try {
-            // Optimization: Limit search iterations during high load - get first 5-10 eligible proxies
-            int searchLimit = Math.min(proxyList.size(), 20); // Avoid searching entire list during spikes
-            int foundCount = 0;
-            
-            for (int i = 0; i < searchLimit && foundCount < 5; i++) {
-                ProxyEntry proxy = proxyList.get(i);
+            // Collect ALL active proxies to ensure proper rotation
+            for (ProxyEntry proxy : proxyList) {
                 if (proxy.isActive()) {
-                    // Skip validation check since proxies are pre-validated
-                    String proxyKey = proxy.getHost() + ":" + proxy.getPort();
-                    AtomicInteger count = connectionsPerProxy.get(proxyKey);
-                    int currentConnections = count != null ? count.get() : 0;
-                    
-                    if (currentConnections < maxConnectionsPerProxy) {
-                        eligibleProxies.add(proxy);
-                        foundCount++;
-                    } else if (anyActiveProxies == null) {
-                        // Lazily initialize fallback list
-                        anyActiveProxies = new ArrayList<>(Math.min(10, proxyList.size()));
-                        anyActiveProxies.add(proxy);
-                    } else {
-                        anyActiveProxies.add(proxy);
-                    }
+                    activeProxies.add(proxy);
                 }
-            }
-            
-            // If no proxies under the limit and we have any active proxies, use those
-            if (eligibleProxies.isEmpty() && anyActiveProxies != null && !anyActiveProxies.isEmpty()) {
-                return anyActiveProxies.get(random.nextInt(anyActiveProxies.size()));
             }
         } finally {
             proxyListLock.readLock().unlock();
         }
         
-        if (eligibleProxies.isEmpty()) {
+        if (activeProxies.isEmpty()) {
             return null;
         }
         
-        return eligibleProxies.get(random.nextInt(eligibleProxies.size()));
+        // Ensure we get a different proxy than last time by incrementing the index
+        synchronized (proxyRotationLock) {
+            // Get the next proxy in sequence to ensure rotation
+            lastProxyIndex = (lastProxyIndex + 1) % activeProxies.size();
+            ProxyEntry selectedProxy = activeProxies.get(lastProxyIndex);
+            
+            // Log the selection to verify rotation
+            logInfo("Rotating proxy: " + selectedProxy.getProtocol() + "://" + 
+                  selectedProxy.getHost() + ":" + selectedProxy.getPort() + 
+                  " (proxy " + (lastProxyIndex + 1) + " of " + activeProxies.size() + ")");
+                  
+            return selectedProxy;
+        }
     }
     
     /**
