@@ -198,8 +198,16 @@ public class SocksProxyService {
                 }
             });
             
-            // Create a thread to handle idle connection cleanup
-            final ExecutorService cleanupThreadPool = Executors.newSingleThreadScheduledExecutor();
+            // Create a scheduled thread for idle connection cleanup
+            final java.util.concurrent.ScheduledExecutorService cleanupScheduler = 
+                Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        Thread t = new Thread(r, "SocksProxy-Cleanup");
+                        t.setDaemon(true);
+                        return t;
+                    }
+                });
             
             serverRunning = true;
             
@@ -214,17 +222,18 @@ public class SocksProxyService {
                 }
             });
             
-            // Start cleanup thread
-            cleanupThreadPool.submit(() -> {
+            // Start cleanup thread - run every 15 seconds
+            cleanupScheduler.scheduleAtFixedRate(() -> {
                 try {
-                    while (serverRunning) {
+                    if (serverRunning) {
                         cleanupIdleConnections();
-                        Thread.sleep(5000); // Check every 5 seconds
+                    } else {
+                        cleanupScheduler.shutdown();
                     }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+                } catch (Exception e) {
+                    logError("Error in cleanup thread: " + e.getMessage());
                 }
-            });
+            }, 15, 15, TimeUnit.SECONDS);
             
             logInfo("Burp SOCKS Rotate server started on localhost:" + localPort + " (NIO mode)");
             onSuccess.run();
@@ -240,10 +249,14 @@ public class SocksProxyService {
      * The main selector loop that handles all NIO events.
      */
     private void runSelectorLoop() throws IOException {
+        int idleCount = 0;
+        
         while (serverRunning) {
             try {
-                // Wait for events with a timeout
-                int readyChannels = selector.select(1000);
+                // Wait for events with a timeout (100ms when active, up to 500ms when idle)
+                // Using longer timeouts reduces CPU usage significantly
+                int selectTimeout = Math.min(100 + (idleCount * 50), 500);
+                int readyChannels = selector.select(selectTimeout);
                 
                 // Check if the server was stopped
                 if (!serverRunning) {
@@ -251,8 +264,30 @@ public class SocksProxyService {
                 }
                 
                 if (readyChannels == 0) {
+                    // No channels ready - count idle cycles
+                    idleCount++;
+                    
+                    // If we've been idle for a while, add a small sleep to reduce CPU usage
+                    if (idleCount > 10) {
+                        try {
+                            Thread.sleep(5);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    
+                    // Check if selector needs to be recreated (JDK bug workaround)
+                    if (idleCount % 100 == 0) {
+                        if (selector.keys().isEmpty()) {
+                            idleCount = 0;
+                        }
+                    }
+                    
                     continue;
                 }
+                
+                // Reset idle count when we have activity
+                idleCount = 0;
                 
                 // Process the ready keys
                 Iterator<SelectionKey> keyIterator = selector.selectedKeys().iterator();
@@ -287,6 +322,26 @@ public class SocksProxyService {
             } catch (IOException e) {
                 if (serverRunning) {
                     logError("Selector operation error: " + e.getMessage());
+                    
+                    // Handle the JDK epoll bug by recreating the selector
+                    try {
+                        Selector newSelector = Selector.open();
+                        for (SelectionKey key : selector.keys()) {
+                            if (key.isValid() && key.channel().isOpen()) {
+                                int ops = key.interestOps();
+                                Object att = key.attachment();
+                                key.cancel();
+                                key.channel().register(newSelector, ops, att);
+                            }
+                        }
+                        selector.close();
+                        selector = newSelector;
+                        idleCount = 0;
+                        logInfo("Recreated selector due to possible JDK bug");
+                    } catch (IOException ex) {
+                        logError("Failed to recreate selector: " + ex.getMessage());
+                        throw e; // Rethrow if we can't recover
+                    }
                 }
             }
         }
@@ -587,7 +642,10 @@ public class SocksProxyService {
             return;
         }
         
-        ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
+        // Use a shared buffer for better performance and less garbage collection
+        ByteBuffer buffer = state.inputBuffer;
+        buffer.clear();
+        
         int bytesRead = proxyChannel.read(buffer);
         
         if (bytesRead == -1) {
@@ -616,10 +674,8 @@ public class SocksProxyService {
                 break;
                 
             case PROXY_CONNECTED:
-                // Forward data to the client
-                while (buffer.hasRemaining()) {
-                    clientChannel.write(buffer);
-                }
+                // Forward data to the client directly without creating additional buffers
+                clientChannel.write(buffer);
                 break;
                 
             default:
