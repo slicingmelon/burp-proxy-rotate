@@ -26,6 +26,17 @@ public class ProxyEntry {
         this.protocol = protocol != null ? protocol.toLowerCase() : "socks5";
     }
 
+    /**
+     * Constructor with all parameters - used for direct connections
+     */
+    public ProxyEntry(String protocol, String host, int port, int protocolVersion, boolean active, boolean isDirectConnection) {
+        this.protocol = protocol;
+        this.host = host;
+        this.port = port;
+        this.active = active;
+        this.errorMessage = "";
+    }
+
     public String getHost() {
         return host;
     }

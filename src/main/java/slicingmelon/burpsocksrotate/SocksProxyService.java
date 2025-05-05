@@ -38,6 +38,10 @@ public class SocksProxyService {
     private int maxConnectionsPerProxy = 50; // Maximum connections per proxy
     private int idleTimeoutSec = 60; // Idle timeout in seconds
     
+    // Bypass configuration for Burp Collaborator domains
+    private boolean bypassCollaborator = true;
+    private final List<String> bypassDomains = new ArrayList<>();
+    
     private final Logging logging;
     private final List<ProxyEntry> proxyList;
     private final ReadWriteLock proxyListLock;
@@ -102,6 +106,10 @@ public class SocksProxyService {
         this.proxyList = proxyList;
         this.proxyListLock = proxyListLock;
         this.logging = logging;
+        
+        // Add default Burp Collaborator domains
+        bypassDomains.add("burpcollaborator.net");
+        bypassDomains.add("oastify.com");
     }
 
     /**
@@ -493,6 +501,26 @@ public class SocksProxyService {
                 lastActivityTime.put(proxyChannel, System.currentTimeMillis());
                 lastActivityTime.put(clientChannel, System.currentTimeMillis());
                 
+                // Check if this is a direct connection (bypassing proxy for Collaborator)
+                if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
+                    // Send success response based on SOCKS version
+                    if (state.socksVersion == 5) {
+                        sendSocks5SuccessResponse(clientChannel);
+                    } else {
+                        sendSocks4SuccessResponse(clientChannel);
+                    }
+                    
+                    // Update state to connected
+                    state.stage = ConnectionStage.PROXY_CONNECTED;
+                    
+                    // Register for reading
+                    proxyChannel.register(selector, SelectionKey.OP_READ);
+                    
+                    logInfo("Direct connection established to " + state.targetHost + ":" + state.targetPort);
+                    return;
+                }
+                
+                // Regular proxy connection logic continues here
                 // Register for reading from the proxy
                 proxyChannel.register(selector, SelectionKey.OP_READ);
                 
@@ -927,6 +955,57 @@ public class SocksProxyService {
      * Connect to the target through a selected proxy with guaranteed rotation.
      */
     private void connectToTarget(SocketChannel clientChannel, ConnectionState state) throws IOException {
+        // Check if the target domain should bypass the proxy
+        if (bypassCollaborator && shouldBypassProxy(state.targetHost)) {
+            // Connect directly to the target
+            try {
+                // Create and configure direct socket channel
+                SocketChannel directChannel = SocketChannel.open();
+                directChannel.configureBlocking(false);
+                Socket directSocket = directChannel.socket();
+                
+                // Set socket options
+                directSocket.setTcpNoDelay(true);
+                
+                // Associate the channels
+                proxyConnections.put(clientChannel, directChannel);
+                
+                // Create a fake proxy entry for tracking
+                ProxyEntry directProxy = new ProxyEntry("direct", state.targetHost, state.targetPort, 0, true, true);
+                state.selectedProxy = directProxy;
+                
+                // Connect directly to the target
+                boolean connected = directChannel.connect(new InetSocketAddress(state.targetHost, state.targetPort));
+                
+                logInfo("Direct connection to collaborator domain: " + state.targetHost + ":" + state.targetPort);
+                
+                // If connected immediately, we need to handle the response appropriately
+                if (connected) {
+                    // Send success response based on SOCKS version
+                    if (state.socksVersion == 5) {
+                        sendSocks5SuccessResponse(clientChannel);
+                    } else {
+                        sendSocks4SuccessResponse(clientChannel);
+                    }
+                    
+                    // Update state to connected
+                    state.stage = ConnectionStage.PROXY_CONNECTED;
+                    
+                    // Register for reading
+                    directChannel.register(selector, SelectionKey.OP_READ);
+                } else {
+                    // Register for connect completion
+                    directChannel.register(selector, SelectionKey.OP_CONNECT);
+                }
+                
+                return;
+            } catch (IOException e) {
+                logError("Error connecting directly to " + state.targetHost + ": " + e.getMessage());
+                // Fall through to use proxy if direct connection fails
+            }
+        }
+        
+        // Original proxy connection logic
         // Choose a proxy using the rotation mechanism
         ProxyEntry proxy = selectRandomActiveProxy();
         
@@ -948,7 +1027,7 @@ public class SocksProxyService {
                 " for target: " + state.targetHost + ":" + state.targetPort);
         
         // Increment connection counter
-        connectionsPerProxy.computeIfAbsent(proxyKey, k -> new AtomicInteger(0)).incrementAndGet();
+        connectionsPerProxy.computeIfAbsent(proxyKey, _ -> new AtomicInteger(0)).incrementAndGet();
         
         // Save the selected proxy
         state.selectedProxy = proxy;
@@ -1560,5 +1639,59 @@ public class SocksProxyService {
         }
         
         return stats.toString();
+    }
+
+    /**
+     * Enables or disables bypassing proxies for Burp Collaborator domains.
+     */
+    public void setBypassCollaborator(boolean bypass) {
+        this.bypassCollaborator = bypass;
+        logInfo("Bypass for Collaborator domains " + (bypass ? "enabled" : "disabled"));
+    }
+    
+    /**
+     * Adds a custom domain to bypass proxy.
+     */
+    public void addBypassDomain(String domain) {
+        if (!bypassDomains.contains(domain)) {
+            bypassDomains.add(domain);
+            logInfo("Added bypass domain: " + domain);
+        }
+    }
+    
+    /**
+     * Removes a bypass domain.
+     */
+    public void removeBypassDomain(String domain) {
+        if (bypassDomains.remove(domain)) {
+            logInfo("Removed bypass domain: " + domain);
+        }
+    }
+    
+    /**
+     * Clears all bypass domains.
+     */
+    public void clearBypassDomains() {
+        bypassDomains.clear();
+        logInfo("All bypass domains have been cleared");
+    }
+    
+    /**
+     * Checks if a domain should bypass proxying.
+     */
+    private boolean shouldBypassProxy(String domain) {
+        if (!bypassCollaborator || domain == null) {
+            return false;
+        }
+        
+        // Check if domain matches or is a subdomain of any bypass domain
+        for (String bypassDomain : bypassDomains) {
+            if (domain.equals(bypassDomain) || domain.endsWith("." + bypassDomain)) {
+                logInfo("Bypassing proxy for domain: " + domain);
+                return true;
+            }
+        }
+        
+        return false;
     }
 } 

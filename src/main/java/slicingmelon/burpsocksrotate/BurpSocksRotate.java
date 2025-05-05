@@ -60,6 +60,7 @@ public class BurpSocksRotate implements BurpExtension {
     private int maxRetryCount = 2;
     private int maxConnectionsPerProxy = 50;
     private boolean loggingEnabled = true;
+    private boolean bypassCollaborator = true; // Default to bypass Collaborator
     
     // UI components for settings
     private JSpinner bufferSizeSpinner;
@@ -68,6 +69,8 @@ public class BurpSocksRotate implements BurpExtension {
     private JSpinner maxRetrySpinner;
     private JSpinner maxConnectionsPerProxySpinner;
     private JCheckBox enableLoggingCheckbox;
+    private JCheckBox bypassCollaboratorCheckbox;
+    private JTextArea bypassDomainsTextArea;
     
     // Persistence keys
     private static final String PROXY_LIST_KEY = "proxyList";
@@ -78,6 +81,8 @@ public class BurpSocksRotate implements BurpExtension {
     private static final String MAX_RETRY_KEY = "maxRetry";
     private static final String MAX_CONNECTIONS_PER_PROXY_KEY = "maxConnectionsPerProxy";
     private static final String LOGGING_ENABLED_KEY = "loggingEnabled";
+    private static final String BYPASS_COLLABORATOR_KEY = "bypassCollaborator";
+    private static final String BYPASS_DOMAINS_KEY = "bypassDomains";
     
     private javax.swing.Timer statsUpdateTimer;
     private JLabel statsLabel;
@@ -103,6 +108,9 @@ public class BurpSocksRotate implements BurpExtension {
         // Initialize the SOCKS Proxy Service - much simpler now
         socksProxyService = new SocksProxyService(proxyList, proxyListLock, api.logging());
         socksProxyService.setExtension(this);
+        
+        // Set bypass collaborator setting
+        socksProxyService.setBypassCollaborator(bypassCollaborator);
 
         // Create and register the UI
         SwingUtilities.invokeLater(() -> {
@@ -220,6 +228,53 @@ public class BurpSocksRotate implements BurpExtension {
         if (loggingEnabledSetting != null) {
             loggingEnabled = Boolean.parseBoolean(loggingEnabledSetting);
         }
+        
+        String bypassCollaboratorSetting = api.persistence().preferences().getString(BYPASS_COLLABORATOR_KEY);
+        if (bypassCollaboratorSetting != null) {
+            bypassCollaborator = Boolean.parseBoolean(bypassCollaboratorSetting);
+        }
+    }
+    
+    /**
+     * Loads the bypass domains from persistence and updates the UI.
+     */
+    private void loadBypassDomains() {
+        String savedDomains = api.persistence().preferences().getString(BYPASS_DOMAINS_KEY);
+        if (savedDomains != null && !savedDomains.isEmpty()) {
+            bypassDomainsTextArea.setText(savedDomains);
+            updateBypassDomains(savedDomains);
+        } else {
+            // Default domains
+            String defaultDomains = "burpcollaborator.net\noastify.com";
+            bypassDomainsTextArea.setText(defaultDomains);
+            updateBypassDomains(defaultDomains);
+        }
+    }
+
+    /**
+     * Updates the bypass domains in the SOCKS proxy service.
+     */
+    private void updateBypassDomains(String domainsText) {
+        if (socksProxyService != null) {
+            // Set bypass mode
+            socksProxyService.setBypassCollaborator(bypassCollaborator);
+            
+            // Clear existing domains
+            // Note: This assumes there's a clearBypassDomains() method in SocksProxyService
+            // You may need to add this or handle it differently
+            
+            // Add each domain
+            String[] domains = domainsText.trim().split("\n");
+            for (String domain : domains) {
+                domain = domain.trim();
+                if (!domain.isEmpty()) {
+                    socksProxyService.addBypassDomain(domain);
+                }
+            }
+        }
+        
+        // Save to persistence
+        api.persistence().preferences().setString(BYPASS_DOMAINS_KEY, domainsText);
     }
     
     /**
@@ -259,281 +314,181 @@ public class BurpSocksRotate implements BurpExtension {
         api.persistence().preferences().setString(MAX_RETRY_KEY, String.valueOf(maxRetryCount));
         api.persistence().preferences().setString(MAX_CONNECTIONS_PER_PROXY_KEY, String.valueOf(maxConnectionsPerProxy));
         api.persistence().preferences().setString(LOGGING_ENABLED_KEY, String.valueOf(loggingEnabled));
+        api.persistence().preferences().setString(BYPASS_COLLABORATOR_KEY, String.valueOf(bypassCollaborator));
     }
     
     /**
      * Creates the user interface components.
      */
     private JComponent createUserInterface() {
-        JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
+        // Create main panel with border layout
+        JPanel mainPanel = new JPanel(new BorderLayout());
         mainPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
         
-        // Create server control panel
-        JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        // Create top control panel
+        JPanel controlPanel = new JPanel(new GridBagLayout());
         
-        JPanel serverControls = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        // Create bottom panel for proxies
+        JPanel proxyPanel = new JPanel(new BorderLayout());
+        proxyPanel.setBorder(BorderFactory.createTitledBorder("SOCKS Proxies"));
         
-        enableButton = new JButton("Enable SOCKS Rotate");
-        enableButton.addActionListener(_ -> enableSocksRotate());
-        serverControls.add(enableButton);
-        
-        disableButton = new JButton("Disable SOCKS Rotate");
-        disableButton.addActionListener(_ -> disableSocksRotate());
-        disableButton.setEnabled(false);
-        serverControls.add(disableButton);
-        
-        // Add a status label with green/red color for success/failure
-        statusLabel = new JLabel("SOCKS Rotate service not active");
-        statusLabel.setForeground(Color.GRAY);
-        statusLabel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(Color.LIGHT_GRAY),
-            BorderFactory.createEmptyBorder(4, 8, 4, 8)
-        ));
-        statusLabel.setOpaque(true);
-        statusLabel.setBackground(new Color(245, 245, 245)); // Light gray background
-        JPanel statsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        statsPanel.add(statusLabel);
-        
-        controlPanel.add(serverControls);
-        controlPanel.add(statsPanel);
-        
-        // Create proxy table
-        proxyTableModel = new ProxyTableModel();
-        JTable proxyTable = new JTable(proxyTableModel);
-        setupTableRenderer(proxyTable);
-        JScrollPane tableScrollPane = new JScrollPane(proxyTable);
-        tableScrollPane.setPreferredSize(new Dimension(300, 200));
-        
-        // Create proxy input panel
-        JPanel inputPanel = new JPanel(new GridBagLayout());
+        // Create GridBagConstraints for the control panel
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
         
-        JLabel protocolLabel = new JLabel("Protocol:");
-        JComboBox<String> protocolCombo = new JComboBox<>(new String[]{"socks5", "socks4"});
-        JLabel hostLabel = new JLabel("Host:");
-        JTextField hostField = new JTextField(15);
-        JLabel portLabel = new JLabel("Port:");
-        JTextField addPortField = new JTextField(5);
-        JButton addButton = new JButton("Add Proxy");
-        JButton validateAllButton = new JButton("Validate All");
-        
+        // Port input
         gbc.gridx = 0;
         gbc.gridy = 0;
-        inputPanel.add(protocolLabel, gbc);
+        gbc.gridwidth = 1;
+        controlPanel.add(new JLabel("Local port:"), gbc);
+        
+        JSpinner portSpinner = new JSpinner(new SpinnerNumberModel(
+                configuredLocalPort > 0 ? configuredLocalPort : 9090, 
+                1024, 65535, 1));
+        
+        portSpinner.addChangeListener(e -> {
+            configuredLocalPort = (Integer) portSpinner.getValue();
+            api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
+        });
         
         gbc.gridx = 1;
-        inputPanel.add(protocolCombo, gbc);
+        gbc.gridy = 0;
+        controlPanel.add(portSpinner, gbc);
         
+        // Status label
+        statusLabel = new JLabel("Status: Stopped");
         gbc.gridx = 2;
-        inputPanel.add(hostLabel, gbc);
+        gbc.gridy = 0;
+        gbc.gridwidth = 2;
+        controlPanel.add(statusLabel, gbc);
         
-        gbc.gridx = 3;
-        inputPanel.add(hostField, gbc);
+        // Stats label
+        statsLabel = new JLabel("No active connections");
+        gbc.gridx = 2;
+        gbc.gridy = 1;
+        gbc.gridwidth = 2;
+        controlPanel.add(statsLabel, gbc);
         
-        gbc.gridx = 4;
-        inputPanel.add(portLabel, gbc);
+        // Enable/Disable buttons
+        enableButton = new JButton("Start Proxy");
+        enableButton.addActionListener(e -> enableSocksRotate());
         
-        gbc.gridx = 5;
-        inputPanel.add(addPortField, gbc);
+        disableButton = new JButton("Stop Proxy");
+        disableButton.addActionListener(e -> disableSocksRotate());
+        disableButton.setEnabled(false);
         
-        gbc.gridx = 6;
-        inputPanel.add(addButton, gbc);
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        gbc.gridwidth = 1;
+        controlPanel.add(enableButton, gbc);
         
-        gbc.gridx = 7;
-        inputPanel.add(validateAllButton, gbc);
+        gbc.gridx = 1;
+        controlPanel.add(disableButton, gbc);
         
-        addButton.addActionListener(_ -> {
-            String protocol = (String) protocolCombo.getSelectedItem();
-            String host = hostField.getText().trim();
-            String portText = addPortField.getText().trim();
+        // Add proxy button
+        JButton addButton = new JButton("Add Proxy");
+        addButton.addActionListener(e -> {
+            String proxyInput = JOptionPane.showInputDialog(
+                    mainPanel,
+                    "Enter proxy URL (e.g. socks5://127.0.0.1:1080, socks4://192.168.1.1:1080):",
+                    "Add SOCKS Proxy",
+                    JOptionPane.PLAIN_MESSAGE);
             
-            if (host.isEmpty()) {
-                JOptionPane.showMessageDialog(mainPanel, "Host cannot be empty", "Validation Error", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-            
-            try {
-                int port = Integer.parseInt(portText);
-                if (port <= 0 || port > 65535) {
-                    JOptionPane.showMessageDialog(mainPanel, "Port must be between 1 and 65535", "Validation Error", JOptionPane.ERROR_MESSAGE);
-                    return;
+            if (proxyInput != null && !proxyInput.isEmpty()) {
+                ProxyEntry proxy = parseProxyUrl(proxyInput);
+                if (proxy != null) {
+                    addProxy(proxy);
+                } else {
+                    JOptionPane.showMessageDialog(
+                            mainPanel,
+                            "Invalid proxy format. Use socks5://host:port or socks4://host:port",
+                            "Error",
+                            JOptionPane.ERROR_MESSAGE);
                 }
-                
-                ProxyEntry proxy = new ProxyEntry(host, port, protocol);
-                addProxy(proxy);
-                
-                // Validate the newly added proxy
-                new Thread(() -> {
-                    validateProxy(proxy, 3);
-                    updateProxyTable();
-                }).start();
-                
-                hostField.setText("");
-                addPortField.setText("");
-                
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(mainPanel, "Port must be a valid number", "Validation Error", JOptionPane.ERROR_MESSAGE);
             }
         });
         
-        validateAllButton.addActionListener(_ -> validateAllProxies());
+        // Proxy list/table
+        proxyTableModel = new ProxyTableModel();
+        JTable proxyTable = new JTable(proxyTableModel);
+        proxyTable.setFillsViewportHeight(true);
+        proxyTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         
-        JPanel bulkPanel = new JPanel(new BorderLayout(5, 5));
-        JTextArea bulkTextArea = new JTextArea(5, 30);
-        bulkTextArea.setToolTipText("Enter one proxy per line in format socks5://host:port or socks4://host:port");
-        JScrollPane bulkScrollPane = new JScrollPane(bulkTextArea);
-        JButton bulkAddButton = new JButton("Add Multiple Proxies");
+        // Setup custom rendering
+        setupTableRenderer(proxyTable);
         
-        bulkPanel.add(new JLabel("Add multiple proxies (format: socks5://host:port, one per line):"), BorderLayout.NORTH);
-        bulkPanel.add(bulkScrollPane, BorderLayout.CENTER);
-        bulkPanel.add(bulkAddButton, BorderLayout.SOUTH);
+        JScrollPane scrollPane = new JScrollPane(proxyTable);
+        scrollPane.setPreferredSize(new Dimension(600, 200));
         
-        bulkAddButton.addActionListener(_ -> {
-            String bulk = bulkTextArea.getText().trim();
-            if (bulk.isEmpty()) {
-                return;
-            }
-            
-            String[] lines = bulk.split("\n");
-            int added = 0;
-            List<ProxyEntry> proxiesToAdd = new ArrayList<>();
-            List<String> invalidLines = new ArrayList<>();
-
-            for (String line : lines) {
-                line = line.trim();
-                if (line.isEmpty()) {
-                    continue;
-                }
-                
-                try {
-                    ProxyEntry proxy = parseProxyUrl(line);
-                    if (proxy != null) {
-                        boolean exists = false;
-                        proxyListLock.readLock().lock();
-                        try {
-                            for (ProxyEntry existing : proxyList) {
-                                if (existing.getHost().equalsIgnoreCase(proxy.getHost()) && 
-                                    existing.getPort() == proxy.getPort() &&
-                                    existing.getProtocol().equals(proxy.getProtocol())) {
-                                    exists = true;
-                                    break;
-                                }
-                            }
-                        } finally {
-                            proxyListLock.readLock().unlock();
-                        }
-                        if (!exists) {
-                            proxiesToAdd.add(proxy);
-                        } else {
-                            logMessage("Skipping duplicate proxy: " + proxy.getProtocol() + "://" + proxy.getHost() + ":" + proxy.getPort());
-                        }
-                    } else {
-                        invalidLines.add(line);
-                    }
-                } catch (Exception ex) {
-                    invalidLines.add(line);
-                }
-            }
-
-            // Display errors for invalid lines
-            if (!invalidLines.isEmpty()) {
-                StringBuilder errorMsg = new StringBuilder("Invalid proxy format in the following lines:\n");
-                for (int i = 0; i < Math.min(5, invalidLines.size()); i++) {
-                    errorMsg.append(" - ").append(invalidLines.get(i)).append("\n");
-                }
-                if (invalidLines.size() > 5) {
-                    errorMsg.append(" - ... and ").append(invalidLines.size() - 5).append(" more\n");
-                }
-                errorMsg.append("\nExpected format: socks5://host:port or socks4://host:port");
-                
-                JOptionPane.showMessageDialog(null, errorMsg.toString(), "Invalid Proxy Format", JOptionPane.ERROR_MESSAGE);
-            }
-
-            // Add collected proxies in one go
-            if (!proxiesToAdd.isEmpty()) {
-                proxyListLock.writeLock().lock();
-                try {
-                    proxyList.addAll(proxiesToAdd);
-                    added = proxiesToAdd.size();
-                } finally {
-                    proxyListLock.writeLock().unlock();
-                }
-            }
-
-            if (added > 0) {
-                bulkTextArea.setText("");
-                updateProxyTable();
-                saveProxies();
-                logMessage("Added " + added + " new proxies from bulk input.");
-            } else {
-                logMessage("No new proxies were added from bulk input.");
-            }
-        });
+        // Button panel for the proxy list
+        JPanel buttonPanel = new JPanel();
         
-        // Management buttons
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton deleteButton = new JButton("Delete Selected");
-        JButton clearButton = new JButton("Clear All");
-        
-        deleteButton.addActionListener(_ -> {
+        JButton removeButton = new JButton("Remove Selected");
+        removeButton.addActionListener(e -> {
             int selectedRow = proxyTable.getSelectedRow();
             if (selectedRow >= 0) {
-                int modelRow = proxyTable.convertRowIndexToModel(selectedRow);
-                if (modelRow >= 0 && modelRow < proxyList.size()) {
-                    removeProxy(modelRow);
-                }
-            } else {
-                JOptionPane.showMessageDialog(mainPanel, "Please select a proxy to delete.", "Delete Proxy", JOptionPane.WARNING_MESSAGE);
+                removeProxy(selectedRow);
             }
         });
         
-        clearButton.addActionListener(_ -> {
-            int confirm = JOptionPane.showConfirmDialog(
-                    mainPanel,
-                    "Are you sure you want to remove all proxies?",
-                    "Confirm Clear",
-                    JOptionPane.YES_NO_OPTION
-            );
-            
-            if (confirm == JOptionPane.YES_OPTION) {
-                clearAllProxies();
-            }
-        });
+        JButton clearButton = new JButton("Clear All");
+        clearButton.addActionListener(e -> clearAllProxies());
         
-        buttonPanel.add(deleteButton);
+        JButton validateButton = new JButton("Validate All");
+        validateButton.addActionListener(e -> validateAllProxies());
+        
+        buttonPanel.add(addButton);
+        buttonPanel.add(removeButton);
         buttonPanel.add(clearButton);
+        buttonPanel.add(validateButton);
         
-        // Log area
-        logTextArea = new JTextArea(10, 40);
+        proxyPanel.add(scrollPane, BorderLayout.CENTER);
+        proxyPanel.add(buttonPanel, BorderLayout.SOUTH);
+        
+        // Log panel
+        JPanel logPanel = new JPanel(new BorderLayout());
+        logPanel.setBorder(BorderFactory.createTitledBorder("Log"));
+        
+        logTextArea = new JTextArea();
         logTextArea.setEditable(false);
-        JScrollPane logScrollPane = new JScrollPane(logTextArea);
+        logTextArea.setLineWrap(true);
+        logTextArea.setWrapStyleWord(true);
         
-        // Create settings panel
+        JScrollPane logScrollPane = new JScrollPane(logTextArea);
+        logScrollPane.setPreferredSize(new Dimension(600, 150));
+        
+        logPanel.add(logScrollPane, BorderLayout.CENTER);
+        
+        // Settings panel
         JPanel settingsPanel = createSettingsPanel();
         
-        // Create tabs
+        // Create a tabbed pane for the main UI
         JTabbedPane tabbedPane = new JTabbedPane();
         
-        JPanel proxyManagementPanel = new JPanel(new BorderLayout(10, 10));
-        proxyManagementPanel.add(tableScrollPane, BorderLayout.CENTER);
+        // Main tab
+        JPanel mainTab = new JPanel(new BorderLayout());
+        mainTab.add(controlPanel, BorderLayout.NORTH);
+        mainTab.add(proxyPanel, BorderLayout.CENTER);
+        mainTab.add(logPanel, BorderLayout.SOUTH);
         
-        JPanel controlsPanel = new JPanel(new BorderLayout());
-        controlsPanel.add(inputPanel, BorderLayout.NORTH);
-        controlsPanel.add(buttonPanel, BorderLayout.SOUTH);
-        
-        proxyManagementPanel.add(controlsPanel, BorderLayout.SOUTH);
-        
-        tabbedPane.addTab("Proxy List", proxyManagementPanel);
-        tabbedPane.addTab("Bulk Add", bulkPanel);
+        tabbedPane.addTab("Main", mainTab);
         tabbedPane.addTab("Settings", settingsPanel);
-        tabbedPane.addTab("Log", logScrollPane);
         
-        mainPanel.add(controlPanel, BorderLayout.NORTH);
+        // Add tabbed pane to main panel
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         
-        // Update table with existing proxies
+        // Setup stats update timer
+        statsUpdateTimer = new javax.swing.Timer(1000, e -> {
+            if (socksProxyService != null && socksProxyService.isRunning()) {
+                statsLabel.setText(socksProxyService.getConnectionPoolStats());
+            } else {
+                statsLabel.setText("No active connections");
+            }
+        });
+        statsUpdateTimer.start();
+        
+        // Update the proxy table
         updateProxyTable();
         
         return mainPanel;
@@ -586,125 +541,123 @@ public class BurpSocksRotate implements BurpExtension {
      * Enables the SOCKS rotation service.
      */
     private void enableSocksRotate() {
-        proxyListLock.readLock().lock();
-        boolean hasActiveProxy;
-        try {
-            hasActiveProxy = proxyList.stream().anyMatch(ProxyEntry::isActive);
-            if (proxyList.isEmpty() || !hasActiveProxy) {
-                JOptionPane.showMessageDialog(null,
-                    proxyList.isEmpty() ? "Please add at least one proxy before enabling the service." : 
-                    "Please add or validate at least one proxy before enabling the service.",
-                    "No Active Proxies",
-                    JOptionPane.WARNING_MESSAGE);
+        // Don't start if service is already running
+        if (socksProxyService != null && socksProxyService.isRunning()) {
+            logMessage("SOCKS Rotate service is already running");
+            return;
+        }
+        
+        if (proxyList.isEmpty()) {
+            JOptionPane.showMessageDialog(
+                    null,
+                    "Please add at least one proxy before enabling the service.",
+                    "No Proxies Available",
+                    JOptionPane.WARNING_MESSAGE
+            );
+            logMessage("Cannot start SOCKS Rotate service: No proxies available");
+            return;
+        }
+        
+        // Find a port to use if not specified
+        if (configuredLocalPort <= 0) {
+            configuredLocalPort = findAvailablePort();
+            if (configuredLocalPort <= 0) {
+                JOptionPane.showMessageDialog(
+                        null,
+                        "Could not find an available port. Please specify a port manually.",
+                        "Port Error",
+                        JOptionPane.ERROR_MESSAGE
+                );
                 return;
             }
-        } finally {
-            proxyListLock.readLock().unlock();
         }
-
-        int portToUse = findAvailablePort();
-        configuredLocalPort = portToUse;
-        saveProxies();
         
-        Runnable onSuccessCallback = () -> {
-            SwingUtilities.invokeLater(() -> {
-                updateServerButtons();
-                
-                // Update Burp's SOCKS proxy settings to use our local proxy
-                updateBurpSocksSettings("localhost", portToUse, true);
-                
-                // Update status label
-                statusLabel.setText("SOCKS Rotate service active on port " + portToUse);
-                statusLabel.setForeground(new Color(0, 150, 0)); 
-                statusLabel.setBackground(new Color(235, 255, 235));
-                
-                JOptionPane.showMessageDialog(null,
-                    "Burp SOCKS Rotate enabled on port " + portToUse + "\n\n" +
-                    "Burp's SOCKS proxy settings have been automatically updated to use the service.\n\n" +
-                    "Burp SOCKS Rotate Proxy Service will route each request through a different active SOCKS proxy from your list.",
-                    "SOCKS Rotate Enabled",
-                    JOptionPane.INFORMATION_MESSAGE);
-            });
-        };
-
-        Consumer<String> onFailureCallback = (errorMessage) -> {
-            SwingUtilities.invokeLater(() -> {
-                logMessage("Proxy service failed to start: " + errorMessage);
-                
-                statusLabel.setText("Failed to start: " + errorMessage);
-                statusLabel.setForeground(Color.RED);
-                statusLabel.setBackground(new Color(255, 235, 235)); 
-                
-                JOptionPane.showMessageDialog(null, 
-                    "Failed to enable SOCKS Rotate: " + errorMessage,
-                    "Service Error", 
-                    JOptionPane.ERROR_MESSAGE);
-                updateServerButtons();
-            });
-        };
-
-        try {
-            logMessage("Enabling Burp SOCKS Rotate service on port " + portToUse + "...");
-            
-            // Initialize service with current settings
-            socksProxyService.setSettings(
+        // Configure the service
+        socksProxyService.setSettings(
                 bufferSize,
                 connectionTimeoutSec * 1000, // Convert to milliseconds
                 socketTimeoutSec * 1000,     // Convert to milliseconds
                 maxRetryCount,
                 maxConnectionsPerProxy
-            );
-            
-            if (statsLabel != null) {
-                if (statsUpdateTimer == null) {
-                    statsUpdateTimer = new javax.swing.Timer(5000, _ -> {
-                        if (socksProxyService != null && socksProxyService.isRunning()) {
-                            String stats = socksProxyService.getConnectionPoolStats();
-                            statsLabel.setText(stats);
-                            
-                            if (loggingEnabled) {
-                                int activeConnections = socksProxyService.getActiveConnectionCount();
-                                if (activeConnections > 5 || (System.currentTimeMillis() / 1000) % 30 == 0) {
-                                    logMessage(stats);
-                                }
-                            }
-                        }
+        );
+        
+        // Configure bypass settings
+        socksProxyService.setBypassCollaborator(bypassCollaborator);
+        socksProxyService.clearBypassDomains();
+        String domainsText = bypassDomainsTextArea.getText();
+        if (domainsText != null && !domainsText.isEmpty()) {
+            String[] domains = domainsText.trim().split("\n");
+            for (String domain : domains) {
+                domain = domain.trim();
+                if (!domain.isEmpty()) {
+                    socksProxyService.addBypassDomain(domain);
+                }
+            }
+        }
+        
+        // Start the service
+        socksProxyService.start(configuredLocalPort, 
+                // Success callback
+                () -> {
+                    SwingUtilities.invokeLater(() -> {
+                        // Update Burp settings
+                        updateBurpSocksSettings("127.0.0.1", configuredLocalPort, true);
+                        
+                        // Update UI
+                        statusLabel.setText("Status: Running on 127.0.0.1:" + configuredLocalPort);
+                        enableButton.setEnabled(false);
+                        disableButton.setEnabled(true);
+                        
+                        logMessage("SOCKS Rotate service started on 127.0.0.1:" + configuredLocalPort);
+                    });
+                },
+                // Failure callback
+                errorMessage -> {
+                    SwingUtilities.invokeLater(() -> {
+                        statusLabel.setText("Status: Failed to start");
+                        JOptionPane.showMessageDialog(
+                                null,
+                                "Failed to start SOCKS Rotate service: " + errorMessage,
+                                "Service Error",
+                                JOptionPane.ERROR_MESSAGE
+                        );
+                        logMessage("Failed to start SOCKS Rotate service: " + errorMessage);
                     });
                 }
-                statsUpdateTimer.start();
-            }
-            
-            socksProxyService.start(portToUse, onSuccessCallback, onFailureCallback);
-        } catch (Exception ex) {
-            logMessage("Unexpected error trying to enable SOCKS Rotate: " + ex.getMessage());
-            JOptionPane.showMessageDialog(null,
-                "An unexpected error occurred: " + ex.getMessage(),
-                "Error",
-                JOptionPane.ERROR_MESSAGE);
-            updateServerButtons();
-        }
+        );
     }
     
     /**
      * Disables the SOCKS rotation service.
      */
     private void disableSocksRotate() {
-        logMessage("Disabling Burp SOCKS Rotate service...");
+        if (socksProxyService == null || !socksProxyService.isRunning()) {
+            logMessage("SOCKS Rotate service is not running");
+            return;
+        }
         
-        // First update Burp's SOCKS proxy settings to disable the proxy
-        updateBurpSocksSettings("127.0.0.1", configuredLocalPort, false);
-        
-        // Now stop the service
-        socksProxyService.stop();
-        updateServerButtons();
-        logMessage("Burp SOCKS Rotate service stopped.");
-
-        statusLabel.setText("SOCKS Rotate service not active");
-        statusLabel.setForeground(Color.GRAY);
-        statusLabel.setBackground(new Color(245, 245, 245)); 
-
-        if (statsUpdateTimer != null && statsUpdateTimer.isRunning()) {
-            statsUpdateTimer.stop();
+        try {
+            logMessage("Stopping SOCKS Rotate service...");
+            
+            // Stop the service
+            socksProxyService.stop();
+            
+            // Update Burp settings
+            updateBurpSocksSettings("", 0, false);
+            
+            // Update UI
+            statusLabel.setText("Status: Stopped");
+            enableButton.setEnabled(true);
+            disableButton.setEnabled(false);
+            
+            logMessage("SOCKS Rotate service stopped");
+            
+        } catch (Exception ex) {
+            logMessage("Error stopping SOCKS Rotate service: " + ex.getMessage());
+            JOptionPane.showMessageDialog(null,
+                    "An error occurred while stopping the service: " + ex.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
         }
     }
     
@@ -1219,23 +1172,23 @@ public class BurpSocksRotate implements BurpExtension {
      * Creates the settings panel with all configuration options.
      */
     private JPanel createSettingsPanel() {
-        JPanel settingsPanel = new JPanel(new BorderLayout(10, 10));
+        JPanel settingsPanel = new JPanel(new BorderLayout());
         settingsPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
         
         JPanel controlsPanel = new JPanel(new GridBagLayout());
+        controlsPanel.setBorder(BorderFactory.createTitledBorder("Connection Settings"));
+        
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(5, 5, 5, 5);
-        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
         
         // Buffer Size
         gbc.gridx = 0;
         gbc.gridy = 0;
         controlsPanel.add(new JLabel("Buffer Size (bytes):"), gbc);
         
-        SpinnerNumberModel bufferModel = new SpinnerNumberModel(bufferSize, 1024, 1048576, 1024); // 1KB to 1MB
-        bufferSizeSpinner = new JSpinner(bufferModel);
-        bufferSizeSpinner.addChangeListener(_ -> {
+        bufferSizeSpinner = new JSpinner(new SpinnerNumberModel(bufferSize, 1024, 65536, 1024));
+        bufferSizeSpinner.addChangeListener(e -> {
             bufferSize = (Integer) bufferSizeSpinner.getValue();
             saveSettings();
             logMessage("Buffer size updated to " + bufferSize + " bytes");
@@ -1247,11 +1200,10 @@ public class BurpSocksRotate implements BurpExtension {
         // Connection Timeout
         gbc.gridx = 0;
         gbc.gridy = 1;
-        controlsPanel.add(new JLabel("Connection Timeout (seconds):"), gbc);
+        controlsPanel.add(new JLabel("Connection Timeout (sec):"), gbc);
         
-        SpinnerNumberModel connTimeoutModel = new SpinnerNumberModel(connectionTimeoutSec, 1, 300, 1); // 1-300 seconds
-        connectionTimeoutSpinner = new JSpinner(connTimeoutModel);
-        connectionTimeoutSpinner.addChangeListener(_ -> {
+        connectionTimeoutSpinner = new JSpinner(new SpinnerNumberModel(connectionTimeoutSec, 1, 300, 1));
+        connectionTimeoutSpinner.addChangeListener(e -> {
             connectionTimeoutSec = (Integer) connectionTimeoutSpinner.getValue();
             saveSettings();
             logMessage("Connection timeout updated to " + connectionTimeoutSec + " seconds");
@@ -1263,11 +1215,10 @@ public class BurpSocksRotate implements BurpExtension {
         // Socket Timeout
         gbc.gridx = 0;
         gbc.gridy = 2;
-        controlsPanel.add(new JLabel("Socket Timeout (seconds):"), gbc);
+        controlsPanel.add(new JLabel("Socket Timeout (sec):"), gbc);
         
-        SpinnerNumberModel socketTimeoutModel = new SpinnerNumberModel(socketTimeoutSec, 1, 300, 1); // 1-300 seconds
-        socketTimeoutSpinner = new JSpinner(socketTimeoutModel);
-        socketTimeoutSpinner.addChangeListener(_ -> {
+        socketTimeoutSpinner = new JSpinner(new SpinnerNumberModel(socketTimeoutSec, 10, 3600, 10));
+        socketTimeoutSpinner.addChangeListener(e -> {
             socketTimeoutSec = (Integer) socketTimeoutSpinner.getValue();
             saveSettings();
             logMessage("Socket timeout updated to " + socketTimeoutSec + " seconds");
@@ -1281,9 +1232,8 @@ public class BurpSocksRotate implements BurpExtension {
         gbc.gridy = 3;
         controlsPanel.add(new JLabel("Max Retry Count:"), gbc);
         
-        SpinnerNumberModel maxRetryModel = new SpinnerNumberModel(maxRetryCount, 0, 10, 1); // 0-10 retries
-        maxRetrySpinner = new JSpinner(maxRetryModel);
-        maxRetrySpinner.addChangeListener(_ -> {
+        maxRetrySpinner = new JSpinner(new SpinnerNumberModel(maxRetryCount, 0, 10, 1));
+        maxRetrySpinner.addChangeListener(e -> {
             maxRetryCount = (Integer) maxRetrySpinner.getValue();
             saveSettings();
             logMessage("Max retry count updated to " + maxRetryCount);
@@ -1297,9 +1247,8 @@ public class BurpSocksRotate implements BurpExtension {
         gbc.gridy = 4;
         controlsPanel.add(new JLabel("Max Connections Per Proxy:"), gbc);
         
-        SpinnerNumberModel maxConnectionsPerProxyModel = new SpinnerNumberModel(maxConnectionsPerProxy, 5, 1000, 5); // 5-1000 connections
-        maxConnectionsPerProxySpinner = new JSpinner(maxConnectionsPerProxyModel);
-        maxConnectionsPerProxySpinner.addChangeListener(_ -> {
+        maxConnectionsPerProxySpinner = new JSpinner(new SpinnerNumberModel(maxConnectionsPerProxy, 1, 500, 10));
+        maxConnectionsPerProxySpinner.addChangeListener(e -> {
             maxConnectionsPerProxy = (Integer) maxConnectionsPerProxySpinner.getValue();
             saveSettings();
             logMessage("Max connections per proxy updated to " + maxConnectionsPerProxy);
@@ -1324,30 +1273,59 @@ public class BurpSocksRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(enableLoggingCheckbox, gbc);
         
-        // Reset Default Settings Button
+        // Bypass Collaborator
         gbc.gridx = 0;
         gbc.gridy = 6;
+        controlsPanel.add(new JLabel("Bypass Collaborator:"), gbc);
+        
+        bypassCollaboratorCheckbox = new JCheckBox();
+        bypassCollaboratorCheckbox.setSelected(bypassCollaborator);
+        bypassCollaboratorCheckbox.addActionListener(_ -> {
+            bypassCollaborator = bypassCollaboratorCheckbox.isSelected();
+            socksProxyService.setBypassCollaborator(bypassCollaborator);
+            saveSettings();
+            logMessage("Bypass Collaborator " + (bypassCollaborator ? "enabled" : "disabled"));
+        });
+        
+        gbc.gridx = 1;
+        controlsPanel.add(bypassCollaboratorCheckbox, gbc);
+        
+        // Bypass Domains section
+        JPanel bypassPanel = new JPanel(new BorderLayout());
+        bypassPanel.setBorder(BorderFactory.createTitledBorder("Bypass Domains (one per line)"));
+        
+        bypassDomainsTextArea = new JTextArea(5, 30);
+        bypassDomainsTextArea.setToolTipText("Enter one domain per line");
+        JScrollPane bypassScrollPane = new JScrollPane(bypassDomainsTextArea);
+        
+        JButton updateDomainsButton = new JButton("Update Domains");
+        updateDomainsButton.addActionListener(e -> {
+            String domains = bypassDomainsTextArea.getText();
+            updateBypassDomains(domains);
+            logMessage("Bypass domains updated");
+        });
+        
+        bypassPanel.add(bypassScrollPane, BorderLayout.CENTER);
+        bypassPanel.add(updateDomainsButton, BorderLayout.SOUTH);
+        
+        // Load saved domains
+        loadBypassDomains();
+        
+        // Reset Default Settings Button
+        gbc.gridx = 0;
+        gbc.gridy = 8;
         gbc.gridwidth = 2;
         gbc.fill = GridBagConstraints.NONE;
         gbc.anchor = GridBagConstraints.CENTER;
-        JButton resetButton = new JButton("Reset Default Settings");
+        
+        JButton resetButton = new JButton("Reset to Default Settings");
         resetButton.addActionListener(_ -> resetDefaultSettings());
+        
         controlsPanel.add(resetButton, gbc);
         
-        JTextArea explanationText = new JTextArea(
-            "Changes take effect immediately and will be used for all new connections.\n" +
-            "Existing connections will continue to use their current settings.\n\n" +
-            "Max Connections Per Proxy limits how many connections each proxy can handle\n" +
-            "before requests are routed to a different proxy."
-        );
-        explanationText.setEditable(false);
-        explanationText.setLineWrap(true);
-        explanationText.setWrapStyleWord(true);
-        explanationText.setBackground(settingsPanel.getBackground());
-        explanationText.setBorder(new EmptyBorder(10, 5, 5, 5));
-        
+        // Add all panels to the settings panel
         settingsPanel.add(controlsPanel, BorderLayout.NORTH);
-        settingsPanel.add(explanationText, BorderLayout.CENTER);
+        settingsPanel.add(bypassPanel, BorderLayout.CENTER);
         
         return settingsPanel;
     }
@@ -1365,6 +1343,7 @@ public class BurpSocksRotate implements BurpExtension {
         socketTimeoutSec = DEFAULT_SOCKET_TIMEOUT;
         maxRetryCount = DEFAULT_MAX_RETRY;
         maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
+        bypassCollaborator = true; // Default to bypass Collaborator
         
         // Restore logging state
         loggingEnabled = currentLoggingState;
@@ -1389,7 +1368,8 @@ public class BurpSocksRotate implements BurpExtension {
             "• Socket Timeout: " + socketTimeoutSec + " seconds\n" +
             "• Max Retry Count: " + maxRetryCount + "\n" +
             "• Max Connections Per Proxy: " + maxConnectionsPerProxy + "\n\n" +
-            "Logging setting was preserved: " + (loggingEnabled ? "Enabled" : "Disabled"),
+            "Logging setting was preserved: " + (loggingEnabled ? "Enabled" : "Disabled") + "\n" +
+            "Bypass Collaborator setting was preserved: " + (bypassCollaborator ? "Enabled" : "Disabled"),
             "Settings Reset", 
             JOptionPane.INFORMATION_MESSAGE));
     }
