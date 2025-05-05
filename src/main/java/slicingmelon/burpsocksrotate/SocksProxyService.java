@@ -503,6 +503,31 @@ public class SocksProxyService {
                 
                 // Check if this is a direct connection (bypassing proxy for Collaborator)
                 if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
+                    logInfo("Direct connection established to " + state.targetHost + ":" + state.targetPort);
+                    
+                    try {
+                        // Configure socket for optimal SSL/TLS handling
+                        Socket socket = proxyChannel.socket();
+                        
+                        // Increase buffer sizes substantially for SSL/TLS data
+                        int largeBuffer = Math.max(bufferSize * 4, 262144); // At least 256KB
+                        socket.setReceiveBufferSize(largeBuffer);
+                        socket.setSendBufferSize(largeBuffer);
+                        
+                        // Performance tuning
+                        socket.setTcpNoDelay(true);
+                        socket.setKeepAlive(true);
+                        socket.setSoTimeout(0);
+                        socket.setPerformancePreferences(0, 1, 0);
+                        
+                        // Create larger buffers for this connection
+                        state.inputBuffer = ByteBuffer.allocateDirect(262144);
+                        state.outputBuffer = ByteBuffer.allocateDirect(262144);
+                    } catch (Exception e) {
+                        // Just log but continue - socket options are optimizations, not critical
+                        logError("Error optimizing direct connection socket: " + e.getMessage());
+                    }
+                    
                     // Send success response based on SOCKS version
                     if (state.socksVersion == 5) {
                         sendSocks5SuccessResponse(clientChannel);
@@ -513,28 +538,9 @@ public class SocksProxyService {
                     // Update state to connected
                     state.stage = ConnectionStage.PROXY_CONNECTED;
                     
-                    // For direct connections, especially HTTPS, we need special handling
-                    // No handshake required - just start bidirectional data transfer
-                    Socket socket = proxyChannel.socket();
-                    
-                    // Configure socket for optimal SSL/TLS handling
-                    try {
-                        socket.setTcpNoDelay(true);
-                        socket.setKeepAlive(true);
-                        socket.setSoTimeout(0); // No timeout for HTTPS handshakes
-                        
-                        // Increase buffer sizes for SSL/TLS data
-                        socket.setReceiveBufferSize(65536);
-                        socket.setSendBufferSize(65536);
-                    } catch (Exception e) {
-                        // Log but continue if socket option setting fails
-                        logError("Error setting socket options for direct connection: " + e.getMessage());
-                    }
-                    
                     // Register for reading
                     proxyChannel.register(selector, SelectionKey.OP_READ);
                     
-                    logInfo("Direct connection established to " + state.targetHost + ":" + state.targetPort);
                     return;
                 }
                 
@@ -566,7 +572,7 @@ public class SocksProxyService {
                        state.selectedProxy.getPort());
             }
         } catch (IOException e) {
-            logError("Proxy connection failed: " + e.getMessage());
+            logError("Connection failed: " + e.getMessage());
             
             // Find the associated client channel and inform about the error
             for (Map.Entry<SocketChannel, SocketChannel> entry : proxyConnections.entrySet()) {
@@ -576,19 +582,36 @@ public class SocksProxyService {
                     
                     if (state != null) {
                         ProxyEntry proxy = state.selectedProxy;
-                        if (proxy != null) {
+                        
+                        // Check if this was a direct connection attempt
+                        if (proxy != null && "direct".equals(proxy.getProtocol())) {
+                            logError("Direct connection to " + state.targetHost + " failed, falling back to proxy");
+                            
+                            // Remove the direct proxy connection
+                            proxyConnections.remove(clientChannel);
+                            
+                            // Try connecting through a regular proxy as fallback
+                            try {
+                                connectThroughProxy(clientChannel, state);
+                                // If we get here, the proxy connection is being established
+                                return;
+                            } catch (IOException ex) {
+                                logError("Fallback to proxy also failed: " + ex.getMessage());
+                                // Fall through to send error response and close
+                            }
+                        } else if (proxy != null) {
+                            // Regular proxy failure
                             // Notify extension about proxy failure
                             if (extension != null) {
                                 extension.notifyProxyFailure(proxy.getHost(), proxy.getPort(), e.getMessage());
                             }
-                            
-                            // Try a different proxy if we have retries left
-                            if (state.socksVersion == 5) {
-                                // Send error to client
-                                sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
-                            } else {
-                                sendSocks4ErrorResponse(clientChannel, (byte) 91); // Rejected
-                            }
+                        }
+                        
+                        // Send error response based on SOCKS version
+                        if (state.socksVersion == 5) {
+                            sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
+                        } else {
+                            sendSocks4ErrorResponse(clientChannel, (byte) 91); // Rejected
                         }
                     }
                     
@@ -600,6 +623,54 @@ public class SocksProxyService {
             
             // Close the proxy channel
             cancelAndCloseChannel(proxyChannel);
+        }
+    }
+    
+    /**
+     * Connects to the target through a proxy (used as fallback when direct connection fails)
+     */
+    private void connectThroughProxy(SocketChannel clientChannel, ConnectionState state) throws IOException {
+        // Choose a proxy using the rotation mechanism
+        ProxyEntry proxy = selectRandomActiveProxy();
+        
+        if (proxy == null) {
+            logError("No active proxies available for fallback");
+            throw new IOException("No active proxies available");
+        }
+        
+        String proxyKey = proxy.getHost() + ":" + proxy.getPort();
+        
+        // Log the fallback
+        logInfo("Fallback: Using proxy " + proxy.getProtocol() + "://" + proxyKey + 
+                " for target: " + state.targetHost + ":" + state.targetPort);
+        
+        // Increment connection counter
+        connectionsPerProxy.computeIfAbsent(proxyKey, _ -> new AtomicInteger(0)).incrementAndGet();
+        
+        // Save the selected proxy
+        state.selectedProxy = proxy;
+        
+        // Create and configure the proxy socket channel
+        SocketChannel proxyChannel = SocketChannel.open();
+        proxyChannel.configureBlocking(false);
+        Socket proxySocket = proxyChannel.socket();
+        
+        // Set socket options
+        proxySocket.setTcpNoDelay(true);
+        
+        // Associate the channels
+        proxyConnections.put(clientChannel, proxyChannel);
+        
+        // Connect to the proxy
+        boolean connected = proxyChannel.connect(new InetSocketAddress(proxy.getHost(), proxy.getPort()));
+        
+        // Register for connect completion
+        proxyChannel.register(selector, SelectionKey.OP_CONNECT);
+        
+        if (connected) {
+            // Connection completed immediately, simulate a connect event
+            SelectionKey key = proxyChannel.keyFor(selector);
+            handleConnect(key);
         }
     }
     
@@ -635,10 +706,18 @@ public class SocksProxyService {
         ByteBuffer buffer = state.inputBuffer;
         buffer.clear();
         
-        int bytesRead = clientChannel.read(buffer);
+        int bytesRead;
+        try {
+            bytesRead = clientChannel.read(buffer);
+        } catch (IOException e) {
+            logError("Error reading from client: " + e.getMessage());
+            closeConnection(clientChannel);
+            return;
+        }
         
         if (bytesRead == -1) {
             // Connection closed by client
+            logInfo("Client closed connection");
             closeConnection(clientChannel);
             return;
         } else if (bytesRead == 0) {
@@ -666,9 +745,33 @@ public class SocksProxyService {
                     if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
                         // For direct connections (especially HTTPS), we need to ensure efficient data handling
                         try {
-                            // Write all data from buffer
-                            while (buffer.hasRemaining()) {
-                                proxyChannel.write(buffer);
+                            // For TLS traffic, make sure we're writing all data in a single call if possible
+                            int totalBytesToWrite = buffer.remaining();
+                            if (totalBytesToWrite > 0) {
+                                logInfo("Forwarding " + totalBytesToWrite + " bytes from client to direct connection");
+                                
+                                // Attempt to write all data at once for efficiency
+                                int written = proxyChannel.write(buffer);
+                                
+                                // If we couldn't write everything at once, keep trying
+                                if (buffer.hasRemaining()) {
+                                    logInfo("Couldn't write all data at once, remaining: " + buffer.remaining());
+                                    
+                                    // Register for write interest to send remaining data
+                                    SelectionKey proxyKey = proxyChannel.keyFor(selector);
+                                    if (proxyKey != null && proxyKey.isValid()) {
+                                        // Create a new buffer with remaining data
+                                        ByteBuffer remainingData = ByteBuffer.allocateDirect(buffer.remaining());
+                                        remainingData.put(buffer);
+                                        remainingData.flip();
+                                        
+                                        // Store the remaining data with the connection state
+                                        state.outputBuffer = remainingData;
+                                        
+                                        // Enable write interest
+                                        proxyKey.interestOps(proxyKey.interestOps() | SelectionKey.OP_WRITE);
+                                    }
+                                }
                             }
                         } catch (IOException e) {
                             logError("Error forwarding data to direct connection: " + e.getMessage());
@@ -724,10 +827,18 @@ public class SocksProxyService {
         ByteBuffer buffer = state.inputBuffer;
         buffer.clear();
         
-        int bytesRead = proxyChannel.read(buffer);
+        int bytesRead;
+        try {
+            bytesRead = proxyChannel.read(buffer);
+        } catch (IOException e) {
+            logError("Error reading from proxy/direct: " + e.getMessage());
+            closeConnection(clientChannel);
+            return;
+        }
         
         if (bytesRead == -1) {
             // Connection closed by proxy
+            logInfo("Proxy/direct connection closed");
             closeConnection(clientChannel);
             return;
         } else if (bytesRead == 0) {
@@ -754,16 +865,47 @@ public class SocksProxyService {
             case PROXY_CONNECTED:
                 // Check if this is a direct connection to a Collaborator domain
                 if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
-                    // For HTTPS or other SSL/TLS traffic, directly write the buffer
+                    // For HTTPS or other SSL/TLS traffic, handle larger chunks efficiently
                     try {
-                        clientChannel.write(buffer);
+                        int totalBytesToWrite = buffer.remaining();
+                        if (totalBytesToWrite > 0) {
+                            logInfo("Forwarding " + totalBytesToWrite + " bytes from direct connection to client");
+                            
+                            // Attempt to write all data at once
+                            int written = clientChannel.write(buffer);
+                            
+                            // If we couldn't write everything at once, keep trying
+                            if (buffer.hasRemaining()) {
+                                logInfo("Couldn't write all data at once to client, remaining: " + buffer.remaining());
+                                
+                                // Register for write interest to send remaining data
+                                SelectionKey clientKey = clientChannel.keyFor(selector);
+                                if (clientKey != null && clientKey.isValid()) {
+                                    // Create a new buffer with remaining data
+                                    ByteBuffer remainingData = ByteBuffer.allocateDirect(buffer.remaining());
+                                    remainingData.put(buffer);
+                                    remainingData.flip();
+                                    
+                                    // Store the remaining data with the connection state
+                                    state.outputBuffer = remainingData;
+                                    
+                                    // Enable write interest
+                                    clientKey.interestOps(clientKey.interestOps() | SelectionKey.OP_WRITE);
+                                }
+                            }
+                        }
                     } catch (IOException e) {
                         logError("Error forwarding data from direct connection: " + e.getMessage());
                         closeConnection(clientChannel);
                     }
                 } else {
                     // Regular proxy forwarding without creating additional buffers
-                    clientChannel.write(buffer);
+                    try {
+                        clientChannel.write(buffer);
+                    } catch (IOException e) {
+                        logError("Error writing to client: " + e.getMessage());
+                        closeConnection(clientChannel);
+                    }
                 }
                 break;
                 
@@ -781,10 +923,71 @@ public class SocksProxyService {
         SocketChannel channel = (SocketChannel) key.channel();
         lastActivityTime.put(channel, System.currentTimeMillis());
         
-        // If there are pending writes, handle them
-        // In this implementation we don't use OP_WRITE much as we write synchronously
-        // NIO OP_WRITE is always readable unless buffer is full, so we only register for it when needed
-        key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE);
+        // Determine if this is a client or proxy channel
+        ConnectionState state = null;
+        ByteBuffer pendingData = null;
+        
+        if (connectionStates.containsKey(channel)) {
+            // This is a client channel
+            state = connectionStates.get(channel);
+            if (state != null) {
+                pendingData = state.outputBuffer;
+            }
+        } else {
+            // This is a proxy channel - find the associated client
+            SocketChannel clientChannel = null;
+            for (Map.Entry<SocketChannel, SocketChannel> entry : proxyConnections.entrySet()) {
+                if (entry.getValue() == channel) {
+                    clientChannel = entry.getKey();
+                    break;
+                }
+            }
+            
+            if (clientChannel != null) {
+                state = connectionStates.get(clientChannel);
+                if (state != null) {
+                    pendingData = state.outputBuffer;
+                }
+            }
+        }
+        
+        // If we have pending data, write it
+        if (state != null && pendingData != null && pendingData.hasRemaining()) {
+            try {
+                int written = channel.write(pendingData);
+                logInfo("Wrote " + written + " bytes to channel, remaining: " + pendingData.remaining());
+                
+                // If we've written all data, clear write interest
+                if (!pendingData.hasRemaining()) {
+                    // Clear the buffer
+                    state.outputBuffer = ByteBuffer.allocateDirect(state.outputBuffer.capacity());
+                    
+                    // Remove write interest, keep read interest
+                    key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE);
+                }
+            } catch (IOException e) {
+                logError("Error writing to channel: " + e.getMessage());
+                
+                // Clear write interest
+                key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE);
+                
+                // If this is a proxy channel, close the associated client connection
+                if (!connectionStates.containsKey(channel)) {
+                    for (Map.Entry<SocketChannel, SocketChannel> entry : proxyConnections.entrySet()) {
+                        if (entry.getValue() == channel) {
+                            closeConnection(entry.getKey());
+                            break;
+                        }
+                    }
+                } else {
+                    // Close this connection
+                    closeConnection(channel);
+                }
+            }
+        } else {
+            // No pending data, clear write interest
+            key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE);
+        }
     }
     
     /**
@@ -996,6 +1199,28 @@ public class SocksProxyService {
     }
 
     /**
+     * Checks if a domain should bypass proxying.
+     */
+    private boolean shouldBypassProxy(String domain) {
+        if (!bypassCollaborator || domain == null) {
+            return false;
+        }
+        
+        // Always log bypassing attempts for debugging
+        logInfo("Checking if domain should bypass proxy: " + domain);
+        
+        // Check if domain matches or is a subdomain of any bypass domain
+        for (String bypassDomain : bypassDomains) {
+            if (domain.equals(bypassDomain) || domain.endsWith("." + bypassDomain)) {
+                logInfo("Bypassing proxy for domain: " + domain);
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
      * Connect to the target through a selected proxy with guaranteed rotation.
      */
     private void connectToTarget(SocketChannel clientChannel, ConnectionState state) throws IOException {
@@ -1003,29 +1228,38 @@ public class SocksProxyService {
         if (bypassCollaborator && shouldBypassProxy(state.targetHost)) {
             // Connect directly to the target
             try {
+                logInfo("Setting up direct connection to " + state.targetHost + ":" + state.targetPort);
+                
                 // Create and configure direct socket channel
                 SocketChannel directChannel = SocketChannel.open();
                 directChannel.configureBlocking(false);
                 Socket directSocket = directChannel.socket();
                 
-                // Set socket options for better HTTPS compatibility
+                // Enhanced socket configuration for SSL/TLS
                 directSocket.setTcpNoDelay(true);
                 directSocket.setKeepAlive(true);
                 directSocket.setSoTimeout(0); // No timeout for HTTPS handshakes
                 
-                // Increase buffer sizes for SSL/TLS data
-                directSocket.setReceiveBufferSize(65536);
-                directSocket.setSendBufferSize(65536);
+                // Increase buffer sizes substantially for SSL/TLS data
+                int largeBuffer = Math.max(bufferSize * 4, 262144); // At least 256KB
+                directSocket.setReceiveBufferSize(largeBuffer);
+                directSocket.setSendBufferSize(largeBuffer);
+                
+                // Disable Nagle's algorithm for better SSL performance
+                directSocket.setTcpNoDelay(true);
+                
+                // Set performance preferences
+                directSocket.setPerformancePreferences(0, 1, 0); // Prioritize latency over bandwidth
                 
                 // Associate the channels
                 proxyConnections.put(clientChannel, directChannel);
                 
-                // Create a fake proxy entry for tracking
+                // Create a fake proxy entry for tracking with special flag
                 ProxyEntry directProxy = new ProxyEntry("direct", state.targetHost, state.targetPort, 0, true, true);
                 state.selectedProxy = directProxy;
                 
                 // Connect directly to the target
-                logInfo("Direct connection to collaborator domain: " + state.targetHost + ":" + state.targetPort);
+                logInfo("Initiating direct connection to " + state.targetHost + ":" + state.targetPort);
                 
                 boolean connected = directChannel.connect(new InetSocketAddress(state.targetHost, state.targetPort));
                 
@@ -1040,6 +1274,10 @@ public class SocksProxyService {
                     
                     // Update state to connected
                     state.stage = ConnectionStage.PROXY_CONNECTED;
+                    
+                    // For direct connections, especially HTTPS, allocate larger buffers
+                    state.inputBuffer = ByteBuffer.allocateDirect(262144); // 256KB
+                    state.outputBuffer = ByteBuffer.allocateDirect(262144);
                     
                     // Register for reading
                     directChannel.register(selector, SelectionKey.OP_READ);
@@ -1727,24 +1965,5 @@ public class SocksProxyService {
     public void clearBypassDomains() {
         bypassDomains.clear();
         logInfo("All bypass domains have been cleared");
-    }
-    
-    /**
-     * Checks if a domain should bypass proxying.
-     */
-    private boolean shouldBypassProxy(String domain) {
-        if (!bypassCollaborator || domain == null) {
-            return false;
-        }
-        
-        // Check if domain matches or is a subdomain of any bypass domain
-        for (String bypassDomain : bypassDomains) {
-            if (domain.equals(bypassDomain) || domain.endsWith("." + bypassDomain)) {
-                logInfo("Bypassing proxy for domain: " + domain);
-                return true;
-            }
-        }
-        
-        return false;
     }
 } 

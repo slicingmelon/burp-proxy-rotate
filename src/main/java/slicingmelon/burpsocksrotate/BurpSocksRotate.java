@@ -25,7 +25,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.Consumer;
 import java.util.Random;
 
 /**
@@ -347,7 +346,7 @@ public class BurpSocksRotate implements BurpExtension {
                 configuredLocalPort > 0 ? configuredLocalPort : 9090, 
                 1024, 65535, 1));
         
-        portSpinner.addChangeListener(e -> {
+        portSpinner.addChangeListener(_ -> {
             configuredLocalPort = (Integer) portSpinner.getValue();
             api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
         });
@@ -372,10 +371,10 @@ public class BurpSocksRotate implements BurpExtension {
         
         // Enable/Disable buttons
         enableButton = new JButton("Start Proxy");
-        enableButton.addActionListener(e -> enableSocksRotate());
+        enableButton.addActionListener(_ -> enableSocksRotate());
         
         disableButton = new JButton("Stop Proxy");
-        disableButton.addActionListener(e -> disableSocksRotate());
+        disableButton.addActionListener(_ -> disableSocksRotate());
         disableButton.setEnabled(false);
         
         gbc.gridx = 0;
@@ -388,7 +387,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         // Add proxy button
         JButton addButton = new JButton("Add Proxy");
-        addButton.addActionListener(e -> {
+        addButton.addActionListener(_ -> {
             String proxyInput = JOptionPane.showInputDialog(
                     mainPanel,
                     "Enter proxy URL (e.g. socks5://127.0.0.1:1080, socks4://192.168.1.1:1080):",
@@ -423,9 +422,9 @@ public class BurpSocksRotate implements BurpExtension {
         
         // Button panel for the proxy list
         JPanel buttonPanel = new JPanel();
-        
+
         JButton removeButton = new JButton("Remove Selected");
-        removeButton.addActionListener(e -> {
+        removeButton.addActionListener(_ -> {
             int selectedRow = proxyTable.getSelectedRow();
             if (selectedRow >= 0) {
                 removeProxy(selectedRow);
@@ -433,10 +432,10 @@ public class BurpSocksRotate implements BurpExtension {
         });
         
         JButton clearButton = new JButton("Clear All");
-        clearButton.addActionListener(e -> clearAllProxies());
+        clearButton.addActionListener(_ -> clearAllProxies());
         
         JButton validateButton = new JButton("Validate All");
-        validateButton.addActionListener(e -> validateAllProxies());
+        validateButton.addActionListener(_ -> validateAllProxies());
         
         buttonPanel.add(addButton);
         buttonPanel.add(removeButton);
@@ -479,7 +478,7 @@ public class BurpSocksRotate implements BurpExtension {
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         
         // Setup stats update timer
-        statsUpdateTimer = new javax.swing.Timer(1000, e -> {
+        statsUpdateTimer = new javax.swing.Timer(1000, _ -> {
             if (socksProxyService != null && socksProxyService.isRunning()) {
                 statsLabel.setText(socksProxyService.getConnectionPoolStats());
             } else {
@@ -1188,7 +1187,7 @@ public class BurpSocksRotate implements BurpExtension {
         controlsPanel.add(new JLabel("Buffer Size (bytes):"), gbc);
         
         bufferSizeSpinner = new JSpinner(new SpinnerNumberModel(bufferSize, 1024, 65536, 1024));
-        bufferSizeSpinner.addChangeListener(e -> {
+        bufferSizeSpinner.addChangeListener(_ -> {
             bufferSize = (Integer) bufferSizeSpinner.getValue();
             saveSettings();
             logMessage("Buffer size updated to " + bufferSize + " bytes");
