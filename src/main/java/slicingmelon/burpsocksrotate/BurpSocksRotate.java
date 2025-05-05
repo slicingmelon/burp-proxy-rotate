@@ -401,10 +401,10 @@ public class BurpSocksRotate implements BurpExtension {
         
         // Enable/Disable buttons
         enableButton = new JButton("Start Proxy");
-        enableButton.addActionListener(e -> enableSocksRotate());
+        enableButton.addActionListener(_ -> enableSocksRotate());
         
         disableButton = new JButton("Stop Proxy");
-        disableButton.addActionListener(e -> disableSocksRotate());
+        disableButton.addActionListener(_ -> disableSocksRotate());
         disableButton.setEnabled(false);
         
         gbc.gridx = 0;
@@ -592,7 +592,7 @@ public class BurpSocksRotate implements BurpExtension {
         });
         
         JButton clearButton = new JButton("Clear All");
-        clearButton.addActionListener(e -> {
+        clearButton.addActionListener(_ -> {
             int confirm = JOptionPane.showConfirmDialog(
                     mainPanel,
                     "Are you sure you want to remove all proxies?",
@@ -606,7 +606,7 @@ public class BurpSocksRotate implements BurpExtension {
         });
         
         JButton validateButton = new JButton("Validate All");
-        validateButton.addActionListener(e -> validateAllProxies());
+        validateButton.addActionListener(_ -> validateAllProxies());
         
         buttonPanel.add(removeButton);
         buttonPanel.add(clearButton);
@@ -660,7 +660,7 @@ public class BurpSocksRotate implements BurpExtension {
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         
         // Setup stats update timer
-        statsUpdateTimer = new javax.swing.Timer(1000, e -> {
+        statsUpdateTimer = new javax.swing.Timer(1000, _ -> {
             if (socksProxyService != null && socksProxyService.isRunning()) {
                 statsLabel.setText(socksProxyService.getConnectionPoolStats());
             } else {
