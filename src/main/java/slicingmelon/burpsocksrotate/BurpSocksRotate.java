@@ -336,24 +336,54 @@ public class BurpSocksRotate implements BurpExtension {
         gbc.insets = new Insets(5, 5, 5, 5);
         gbc.fill = GridBagConstraints.HORIZONTAL;
         
-        // Port input
+        // Port input - now marked as "Auto" by default
         gbc.gridx = 0;
         gbc.gridy = 0;
         gbc.gridwidth = 1;
         controlPanel.add(new JLabel("Local port:"), gbc);
         
+        // Use a text field with checkbox to toggle auto/manual
+        JCheckBox autoPortCheckbox = new JCheckBox("Auto", true);
         JSpinner portSpinner = new JSpinner(new SpinnerNumberModel(
                 configuredLocalPort > 0 ? configuredLocalPort : 9090, 
                 1024, 65535, 1));
+        portSpinner.setEnabled(!autoPortCheckbox.isSelected());
         
-        portSpinner.addChangeListener(_ -> {
-            configuredLocalPort = (Integer) portSpinner.getValue();
+        autoPortCheckbox.addActionListener(_ -> {
+            boolean auto = autoPortCheckbox.isSelected();
+            portSpinner.setEnabled(!auto);
+            if (auto) {
+                configuredLocalPort = 0; // Reset to auto mode
+            } else {
+                configuredLocalPort = (Integer) portSpinner.getValue();
+            }
             api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
         });
         
+        portSpinner.addChangeListener(_ -> {
+            if (!autoPortCheckbox.isSelected()) {
+                configuredLocalPort = (Integer) portSpinner.getValue();
+                api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
+            }
+        });
+        
+        // Create a panel for port controls
+        JPanel portPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        portPanel.add(autoPortCheckbox);
+        portPanel.add(portSpinner);
+        
         gbc.gridx = 1;
         gbc.gridy = 0;
-        controlPanel.add(portSpinner, gbc);
+        controlPanel.add(portPanel, gbc);
+        
+        // If we've got a configured port, disable auto mode
+        if (configuredLocalPort > 0) {
+            autoPortCheckbox.setSelected(false);
+            portSpinner.setEnabled(true);
+        } else {
+            autoPortCheckbox.setSelected(true);
+            portSpinner.setEnabled(false);
+        }
         
         // Status label
         statusLabel = new JLabel("Status: Stopped");
@@ -371,10 +401,10 @@ public class BurpSocksRotate implements BurpExtension {
         
         // Enable/Disable buttons
         enableButton = new JButton("Start Proxy");
-        enableButton.addActionListener(_ -> enableSocksRotate());
+        enableButton.addActionListener(e -> enableSocksRotate());
         
         disableButton = new JButton("Stop Proxy");
-        disableButton.addActionListener(_ -> disableSocksRotate());
+        disableButton.addActionListener(e -> disableSocksRotate());
         disableButton.setEnabled(false);
         
         gbc.gridx = 0;
@@ -384,29 +414,6 @@ public class BurpSocksRotate implements BurpExtension {
         
         gbc.gridx = 1;
         controlPanel.add(disableButton, gbc);
-        
-        // Add proxy button
-        JButton addButton = new JButton("Add Proxy");
-        addButton.addActionListener(_ -> {
-            String proxyInput = JOptionPane.showInputDialog(
-                    mainPanel,
-                    "Enter proxy URL (e.g. socks5://127.0.0.1:1080, socks4://192.168.1.1:1080):",
-                    "Add SOCKS Proxy",
-                    JOptionPane.PLAIN_MESSAGE);
-            
-            if (proxyInput != null && !proxyInput.isEmpty()) {
-                ProxyEntry proxy = parseProxyUrl(proxyInput);
-                if (proxy != null) {
-                    addProxy(proxy);
-                } else {
-                    JOptionPane.showMessageDialog(
-                            mainPanel,
-                            "Invalid proxy format. Use socks5://host:port or socks4://host:port",
-                            "Error",
-                            JOptionPane.ERROR_MESSAGE);
-                }
-            }
-        });
         
         // Proxy list/table
         proxyTableModel = new ProxyTableModel();
@@ -420,9 +427,162 @@ public class BurpSocksRotate implements BurpExtension {
         JScrollPane scrollPane = new JScrollPane(proxyTable);
         scrollPane.setPreferredSize(new Dimension(600, 200));
         
+        // Create tabbed pane for different proxy addition methods
+        JTabbedPane proxyAddTabs = new JTabbedPane();
+        
+        // Single proxy panel
+        JPanel singleAddPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        
+        JLabel protocolLabel = new JLabel("Protocol:");
+        JComboBox<String> protocolCombo = new JComboBox<>(new String[]{"socks5", "socks4"});
+        JLabel hostLabel = new JLabel("Host:");
+        JTextField hostField = new JTextField(15);
+        JLabel portLabel = new JLabel("Port:");
+        JTextField addPortField = new JTextField(5);
+        JButton addButton = new JButton("Add Proxy");
+        
+        singleAddPanel.add(protocolLabel);
+        singleAddPanel.add(protocolCombo);
+        singleAddPanel.add(hostLabel);
+        singleAddPanel.add(hostField);
+        singleAddPanel.add(portLabel);
+        singleAddPanel.add(addPortField);
+        singleAddPanel.add(addButton);
+        
+        addButton.addActionListener(_ -> {
+            String protocol = (String) protocolCombo.getSelectedItem();
+            String host = hostField.getText().trim();
+            String portText = addPortField.getText().trim();
+            
+            if (host.isEmpty()) {
+                JOptionPane.showMessageDialog(mainPanel, "Host cannot be empty", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            try {
+                int port = Integer.parseInt(portText);
+                if (port <= 0 || port > 65535) {
+                    JOptionPane.showMessageDialog(mainPanel, "Port must be between 1 and 65535", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+                
+                ProxyEntry proxy = new ProxyEntry(host, port, protocol);
+                addProxy(proxy);
+                
+                // Validate the newly added proxy
+                new Thread(() -> {
+                    validateProxy(proxy, 3);
+                    updateProxyTable();
+                }).start();
+                
+                hostField.setText("");
+                addPortField.setText("");
+                
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(mainPanel, "Port must be a valid number", "Validation Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        
+        // Bulk proxy panel
+        JPanel bulkPanel = new JPanel(new BorderLayout(5, 5));
+        JTextArea bulkTextArea = new JTextArea(5, 30);
+        bulkTextArea.setToolTipText("Enter one proxy per line in format socks5://host:port or socks4://host:port");
+        JScrollPane bulkScrollPane = new JScrollPane(bulkTextArea);
+        JButton bulkAddButton = new JButton("Add Multiple Proxies");
+        
+        bulkPanel.add(new JLabel("Enter multiple proxies (format: socks5://host:port, one per line):"), BorderLayout.NORTH);
+        bulkPanel.add(bulkScrollPane, BorderLayout.CENTER);
+        bulkPanel.add(bulkAddButton, BorderLayout.SOUTH);
+        
+        bulkAddButton.addActionListener(_ -> {
+            String bulk = bulkTextArea.getText().trim();
+            if (bulk.isEmpty()) {
+                return;
+            }
+            
+            String[] lines = bulk.split("\n");
+            int added = 0;
+            List<ProxyEntry> proxiesToAdd = new ArrayList<>();
+            List<String> invalidLines = new ArrayList<>();
+
+            for (String line : lines) {
+                line = line.trim();
+                if (line.isEmpty()) {
+                    continue;
+                }
+                
+                try {
+                    ProxyEntry proxy = parseProxyUrl(line);
+                    if (proxy != null) {
+                        boolean exists = false;
+                        proxyListLock.readLock().lock();
+                        try {
+                            for (ProxyEntry existing : proxyList) {
+                                if (existing.getHost().equalsIgnoreCase(proxy.getHost()) && 
+                                    existing.getPort() == proxy.getPort() &&
+                                    existing.getProtocol().equals(proxy.getProtocol())) {
+                                    exists = true;
+                                    break;
+                                }
+                            }
+                        } finally {
+                            proxyListLock.readLock().unlock();
+                        }
+                        if (!exists) {
+                            proxiesToAdd.add(proxy);
+                        } else {
+                            logMessage("Skipping duplicate proxy: " + proxy.getProtocol() + "://" + proxy.getHost() + ":" + proxy.getPort());
+                        }
+                    } else {
+                        invalidLines.add(line);
+                    }
+                } catch (Exception ex) {
+                    invalidLines.add(line);
+                }
+            }
+
+            // Display errors for invalid lines
+            if (!invalidLines.isEmpty()) {
+                StringBuilder errorMsg = new StringBuilder("Invalid proxy format in the following lines:\n");
+                for (int i = 0; i < Math.min(5, invalidLines.size()); i++) {
+                    errorMsg.append(" - ").append(invalidLines.get(i)).append("\n");
+                }
+                if (invalidLines.size() > 5) {
+                    errorMsg.append(" - ... and ").append(invalidLines.size() - 5).append(" more\n");
+                }
+                errorMsg.append("\nExpected format: socks5://host:port or socks4://host:port");
+                
+                JOptionPane.showMessageDialog(null, errorMsg.toString(), "Invalid Proxy Format", JOptionPane.ERROR_MESSAGE);
+            }
+
+            // Add collected proxies in one go
+            if (!proxiesToAdd.isEmpty()) {
+                proxyListLock.writeLock().lock();
+                try {
+                    proxyList.addAll(proxiesToAdd);
+                    added = proxiesToAdd.size();
+                } finally {
+                    proxyListLock.writeLock().unlock();
+                }
+            }
+
+            if (added > 0) {
+                bulkTextArea.setText("");
+                updateProxyTable();
+                saveProxies();
+                logMessage("Added " + added + " new proxies from bulk input.");
+            } else {
+                logMessage("No new proxies were added from bulk input.");
+            }
+        });
+        
+        // Add tabs
+        proxyAddTabs.addTab("Single Proxy", singleAddPanel);
+        proxyAddTabs.addTab("Bulk Add", bulkPanel);
+        
         // Button panel for the proxy list
         JPanel buttonPanel = new JPanel();
-
+        
         JButton removeButton = new JButton("Remove Selected");
         removeButton.addActionListener(_ -> {
             int selectedRow = proxyTable.getSelectedRow();
@@ -432,18 +592,40 @@ public class BurpSocksRotate implements BurpExtension {
         });
         
         JButton clearButton = new JButton("Clear All");
-        clearButton.addActionListener(_ -> clearAllProxies());
+        clearButton.addActionListener(e -> {
+            int confirm = JOptionPane.showConfirmDialog(
+                    mainPanel,
+                    "Are you sure you want to remove all proxies?",
+                    "Confirm Clear",
+                    JOptionPane.YES_NO_OPTION
+            );
+            
+            if (confirm == JOptionPane.YES_OPTION) {
+                clearAllProxies();
+            }
+        });
         
         JButton validateButton = new JButton("Validate All");
-        validateButton.addActionListener(_ -> validateAllProxies());
+        validateButton.addActionListener(e -> validateAllProxies());
         
-        buttonPanel.add(addButton);
         buttonPanel.add(removeButton);
         buttonPanel.add(clearButton);
         buttonPanel.add(validateButton);
         
-        proxyPanel.add(scrollPane, BorderLayout.CENTER);
-        proxyPanel.add(buttonPanel, BorderLayout.SOUTH);
+        JPanel proxyAddPanel = new JPanel(new BorderLayout());
+        proxyAddPanel.add(proxyAddTabs, BorderLayout.CENTER);
+        
+        // Proxy panel with table and controls
+        JPanel proxyTablePanel = new JPanel(new BorderLayout());
+        proxyTablePanel.add(scrollPane, BorderLayout.CENTER);
+        proxyTablePanel.add(buttonPanel, BorderLayout.SOUTH);
+        
+        // Split panel for table and add controls
+        JSplitPane proxySplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, 
+                                                 proxyTablePanel, proxyAddPanel);
+        proxySplitPane.setResizeWeight(0.7); // Give more space to table
+        
+        proxyPanel.add(proxySplitPane, BorderLayout.CENTER);
         
         // Log panel
         JPanel logPanel = new JPanel(new BorderLayout());
@@ -478,7 +660,7 @@ public class BurpSocksRotate implements BurpExtension {
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         
         // Setup stats update timer
-        statsUpdateTimer = new javax.swing.Timer(1000, _ -> {
+        statsUpdateTimer = new javax.swing.Timer(1000, e -> {
             if (socksProxyService != null && socksProxyService.isRunning()) {
                 statsLabel.setText(socksProxyService.getConnectionPoolStats());
             } else {
@@ -557,10 +739,11 @@ public class BurpSocksRotate implements BurpExtension {
             return;
         }
         
-        // Find a port to use if not specified
+        // Always use a random port if configuredLocalPort is 0, otherwise use the configured port
+        int portToUse;
         if (configuredLocalPort <= 0) {
-            configuredLocalPort = findAvailablePort();
-            if (configuredLocalPort <= 0) {
+            portToUse = findAvailablePort();
+            if (portToUse <= 0) {
                 JOptionPane.showMessageDialog(
                         null,
                         "Could not find an available port. Please specify a port manually.",
@@ -569,7 +752,11 @@ public class BurpSocksRotate implements BurpExtension {
                 );
                 return;
             }
+        } else {
+            portToUse = configuredLocalPort;
         }
+        
+        final int finalPortToUse = portToUse;
         
         // Configure the service
         socksProxyService.setSettings(
@@ -595,19 +782,19 @@ public class BurpSocksRotate implements BurpExtension {
         }
         
         // Start the service
-        socksProxyService.start(configuredLocalPort, 
+        socksProxyService.start(finalPortToUse, 
                 // Success callback
                 () -> {
                     SwingUtilities.invokeLater(() -> {
                         // Update Burp settings
-                        updateBurpSocksSettings("127.0.0.1", configuredLocalPort, true);
+                        updateBurpSocksSettings("127.0.0.1", finalPortToUse, true);
                         
                         // Update UI
-                        statusLabel.setText("Status: Running on 127.0.0.1:" + configuredLocalPort);
+                        statusLabel.setText("Status: Running on 127.0.0.1:" + finalPortToUse);
                         enableButton.setEnabled(false);
                         disableButton.setEnabled(true);
                         
-                        logMessage("SOCKS Rotate service started on 127.0.0.1:" + configuredLocalPort);
+                        logMessage("SOCKS Rotate service started on 127.0.0.1:" + finalPortToUse);
                     });
                 },
                 // Failure callback
