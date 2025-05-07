@@ -343,16 +343,16 @@ public class BurpSocksRotate implements BurpExtension {
         controlPanel.add(new JLabel("Local port:"), gbc);
         
         // Use a text field with checkbox to toggle auto/manual
-        JCheckBox autoPortCheckbox = new JCheckBox("Auto", true);
+        JCheckBox randomPortCheckbox = new JCheckBox("Random Port", true);
         JSpinner portSpinner = new JSpinner(new SpinnerNumberModel(
                 configuredLocalPort > 0 ? configuredLocalPort : 9090, 
                 1024, 65535, 1));
-        portSpinner.setEnabled(!autoPortCheckbox.isSelected());
+        portSpinner.setEnabled(!randomPortCheckbox.isSelected());
         
-        autoPortCheckbox.addActionListener(_ -> {
-            boolean auto = autoPortCheckbox.isSelected();
-            portSpinner.setEnabled(!auto);
-            if (auto) {
+        randomPortCheckbox.addActionListener(_ -> {
+            boolean random = randomPortCheckbox.isSelected();
+            portSpinner.setEnabled(!random);
+            if (random) {
                 configuredLocalPort = 0; // Reset to auto mode
             } else {
                 configuredLocalPort = (Integer) portSpinner.getValue();
@@ -361,7 +361,7 @@ public class BurpSocksRotate implements BurpExtension {
         });
         
         portSpinner.addChangeListener(_ -> {
-            if (!autoPortCheckbox.isSelected()) {
+            if (!randomPortCheckbox.isSelected()) {
                 configuredLocalPort = (Integer) portSpinner.getValue();
                 api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
             }
@@ -369,7 +369,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         // Create a panel for port controls
         JPanel portPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-        portPanel.add(autoPortCheckbox);
+        portPanel.add(randomPortCheckbox);
         portPanel.add(portSpinner);
         
         gbc.gridx = 1;
@@ -378,10 +378,10 @@ public class BurpSocksRotate implements BurpExtension {
         
         // If we've got a configured port, disable auto mode
         if (configuredLocalPort > 0) {
-            autoPortCheckbox.setSelected(false);
+            randomPortCheckbox.setSelected(false);
             portSpinner.setEnabled(true);
         } else {
-            autoPortCheckbox.setSelected(true);
+            randomPortCheckbox.setSelected(true);
             portSpinner.setEnabled(false);
         }
         
