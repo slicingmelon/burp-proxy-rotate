@@ -470,7 +470,7 @@ public class BurpSocksRotate implements BurpExtension {
         
         unifiedAddButton.addActionListener(_ -> {
             String proxyUrl = unifiedField.getText().trim();
-            if (proxyUrl.isEmpty()) {
+            if (proxyUrl.isEmpty() || proxyUrl.equals("socks5://host:port")) {
                 JOptionPane.showMessageDialog(mainPanel, "Please enter a proxy URL", "Validation Error", JOptionPane.ERROR_MESSAGE);
                 return;
             }
@@ -492,69 +492,12 @@ public class BurpSocksRotate implements BurpExtension {
             }).start();
             
             unifiedField.setText("");
-        });
-        
-        // Create a divider label
-        JPanel dividerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        dividerPanel.add(new JLabel("-- OR --"));
-        
-        // Create a panel for the separate inputs (existing UI)
-        JPanel separateInputPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        
-        JLabel protocolLabel = new JLabel("Protocol:");
-        JComboBox<String> protocolCombo = new JComboBox<>(new String[]{"socks5", "socks4"});
-        JLabel hostLabel = new JLabel("Host:");
-        JTextField hostField = new JTextField(15);
-        JLabel portLabel = new JLabel("Port:");
-        JTextField addPortField = new JTextField(5);
-        JButton addButton = new JButton("Add Proxy");
-        
-        separateInputPanel.add(protocolLabel);
-        separateInputPanel.add(protocolCombo);
-        separateInputPanel.add(hostLabel);
-        separateInputPanel.add(hostField);
-        separateInputPanel.add(portLabel);
-        separateInputPanel.add(addPortField);
-        separateInputPanel.add(addButton);
-        
-        addButton.addActionListener(_ -> {
-            String protocol = (String) protocolCombo.getSelectedItem();
-            String host = hostField.getText().trim();
-            String portText = addPortField.getText().trim();
-            
-            if (host.isEmpty()) {
-                JOptionPane.showMessageDialog(mainPanel, "Host cannot be empty", "Validation Error", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-            
-            try {
-                int port = Integer.parseInt(portText);
-                if (port <= 0 || port > 65535) {
-                    JOptionPane.showMessageDialog(mainPanel, "Port must be between 1 and 65535", "Validation Error", JOptionPane.ERROR_MESSAGE);
-                    return;
-                }
-                
-                ProxyEntry proxy = ProxyEntry.createWithProtocol(host, port, protocol);
-                addProxy(proxy);
-                
-                // Validate the newly added proxy
-                new Thread(() -> {
-                    validateProxy(proxy, 3);
-                    updateProxyTable();
-                }).start();
-                
-                hostField.setText("");
-                addPortField.setText("");
-                
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(mainPanel, "Port must be a valid number", "Validation Error", JOptionPane.ERROR_MESSAGE);
-            }
+            unifiedField.setText("socks5://host:port");
+            unifiedField.setForeground(Color.GRAY);
         });
         
         // Add the panels to the singleAddPanel
-        singleAddPanel.add(unifiedInputPanel, BorderLayout.NORTH);
-        singleAddPanel.add(dividerPanel, BorderLayout.CENTER);
-        singleAddPanel.add(separateInputPanel, BorderLayout.SOUTH);
+        singleAddPanel.add(unifiedInputPanel, BorderLayout.CENTER);
         
         // Bulk proxy panel
         JPanel bulkPanel = new JPanel(new BorderLayout(5, 5));
