@@ -153,7 +153,7 @@ public class BurpSocksRotate implements BurpExtension {
                         if (!host.isEmpty() && port > 0 && port <= 65535) {
                             proxyListLock.writeLock().lock();
                             try {
-                                proxyList.add(new ProxyEntry(host, port, protocol));
+                                proxyList.add(ProxyEntry.createWithProtocol(host, port, protocol));
                             } finally {
                                 proxyListLock.writeLock().unlock();
                             }
@@ -466,7 +466,7 @@ public class BurpSocksRotate implements BurpExtension {
                     return;
                 }
                 
-                ProxyEntry proxy = new ProxyEntry(host, port, protocol);
+                ProxyEntry proxy = ProxyEntry.createWithProtocol(host, port, protocol);
                 addProxy(proxy);
                 
                 // Validate the newly added proxy
@@ -1288,7 +1288,7 @@ public class BurpSocksRotate implements BurpExtension {
                 
                 // Validate port range
                 if (port > 0 && port <= 65535) {
-                    return new ProxyEntry(host, port, protocol);
+                    return ProxyEntry.createWithProtocol(host, port, protocol);
                 }
             }
         } else {
@@ -1302,7 +1302,7 @@ public class BurpSocksRotate implements BurpExtension {
                 
                 // Validate port range
                 if (port > 0 && port <= 65535) {
-                    return new ProxyEntry(host, port, "socks5"); // Default to socks5
+                    return ProxyEntry.createWithProtocol(host, port, "socks5"); // Default to socks5
                 }
             }
         }

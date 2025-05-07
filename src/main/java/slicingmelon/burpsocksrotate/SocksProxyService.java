@@ -1230,6 +1230,10 @@ public class SocksProxyService {
             try {
                 logInfo("Setting up direct connection to " + state.targetHost + ":" + state.targetPort);
                 
+                // Create a fake proxy entry for tracking with special flag
+                ProxyEntry directProxy = ProxyEntry.createDirect(state.targetHost, state.targetPort);
+                state.selectedProxy = directProxy;
+                
                 // Create and configure direct socket channel
                 SocketChannel directChannel = SocketChannel.open();
                 directChannel.configureBlocking(false);
@@ -1253,10 +1257,6 @@ public class SocksProxyService {
                 
                 // Associate the channels
                 proxyConnections.put(clientChannel, directChannel);
-                
-                // Create a fake proxy entry for tracking with special flag
-                ProxyEntry directProxy = new ProxyEntry("direct", state.targetHost, state.targetPort, 0, true, true);
-                state.selectedProxy = directProxy;
                 
                 // Connect directly to the target
                 logInfo("Initiating direct connection to " + state.targetHost + ":" + state.targetPort);

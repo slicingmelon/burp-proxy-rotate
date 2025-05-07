@@ -10,31 +10,37 @@ public class ProxyEntry {
     private String errorMessage;
     private String protocol; // Either "socks4" or "socks5"
 
-    public ProxyEntry(String host, int port) {
-        this.host = host;
-        this.port = port;
-        this.active = true;
-        this.errorMessage = "";
-        this.protocol = "socks5";
-    }
-
-    public ProxyEntry(String host, int port, String protocol) {
-        this.host = host;
-        this.port = port;
-        this.active = true;
-        this.errorMessage = "";
-        this.protocol = protocol != null ? protocol.toLowerCase() : "socks5";
-    }
-
     /**
-     * Constructor with all parameters - used for direct connections
+     * Unified constructor for ProxyEntry
+     * 
+     * @param host The proxy host address
+     * @param port The proxy port
+     * @param protocol Protocol to use (socks4, socks5, or direct). Defaults to socks5
+     * @param protocolVersion Protocol version (used with direct connections)
+     * @param active Whether this proxy is active. Defaults to true
+     * @param isDirectConnection Whether this is a direct connection. Defaults to false
      */
-    public ProxyEntry(String protocol, String host, int port, int protocolVersion, boolean active, boolean isDirectConnection) {
-        this.protocol = protocol;
+    public ProxyEntry(String host, int port, String protocol, int protocolVersion, boolean active, boolean isDirectConnection) {
         this.host = host;
         this.port = port;
         this.active = active;
         this.errorMessage = "";
+        this.protocol = protocol != null ? protocol.toLowerCase() : "socks5";
+    }
+
+    // Convenience method for basic proxy entry
+    public static ProxyEntry createBasic(String host, int port) {
+        return new ProxyEntry(host, port, "socks5", 0, true, false);
+    }
+
+    // Convenience method with protocol specification
+    public static ProxyEntry createWithProtocol(String host, int port, String protocol) {
+        return new ProxyEntry(host, port, protocol, 0, true, false);
+    }
+
+    // Convenience method for direct connections
+    public static ProxyEntry createDirect(String host, int port) {
+        return new ProxyEntry(host, port, "direct", 0, true, true);
     }
 
     public String getHost() {
