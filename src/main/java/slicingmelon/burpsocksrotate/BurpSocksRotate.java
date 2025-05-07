@@ -13,6 +13,8 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.*;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -431,7 +433,73 @@ public class BurpSocksRotate implements BurpExtension {
         JTabbedPane proxyAddTabs = new JTabbedPane();
         
         // Single proxy panel
-        JPanel singleAddPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JPanel singleAddPanel = new JPanel(new BorderLayout());
+        
+        // Create a panel for the single unified input
+        JPanel unifiedInputPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JLabel unifiedLabel = new JLabel("Proxy URL:");
+        JTextField unifiedField = new JTextField(25);
+        unifiedField.setToolTipText("Format: socks5://host:port or socks4://host:port");
+        
+        // Add placeholder text
+        unifiedField.setText("socks5://host:port");
+        unifiedField.setForeground(Color.GRAY);
+        unifiedField.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                if (unifiedField.getText().equals("socks5://host:port")) {
+                    unifiedField.setText("");
+                    unifiedField.setForeground(Color.BLACK);
+                }
+            }
+            
+            @Override
+            public void focusLost(FocusEvent e) {
+                if (unifiedField.getText().isEmpty()) {
+                    unifiedField.setText("socks5://host:port");
+                    unifiedField.setForeground(Color.GRAY);
+                }
+            }
+        });
+        
+        JButton unifiedAddButton = new JButton("Add");
+        
+        unifiedInputPanel.add(unifiedLabel);
+        unifiedInputPanel.add(unifiedField);
+        unifiedInputPanel.add(unifiedAddButton);
+        
+        unifiedAddButton.addActionListener(_ -> {
+            String proxyUrl = unifiedField.getText().trim();
+            if (proxyUrl.isEmpty()) {
+                JOptionPane.showMessageDialog(mainPanel, "Please enter a proxy URL", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            ProxyEntry proxy = parseProxyUrl(proxyUrl);
+            if (proxy == null) {
+                JOptionPane.showMessageDialog(mainPanel, 
+                    "Invalid proxy format. Please use socks5://host:port or socks4://host:port", 
+                    "Validation Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            
+            addProxy(proxy);
+            
+            // Validate the newly added proxy
+            new Thread(() -> {
+                validateProxy(proxy, 3);
+                updateProxyTable();
+            }).start();
+            
+            unifiedField.setText("");
+        });
+        
+        // Create a divider label
+        JPanel dividerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        dividerPanel.add(new JLabel("-- OR --"));
+        
+        // Create a panel for the separate inputs (existing UI)
+        JPanel separateInputPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         
         JLabel protocolLabel = new JLabel("Protocol:");
         JComboBox<String> protocolCombo = new JComboBox<>(new String[]{"socks5", "socks4"});
@@ -441,13 +509,13 @@ public class BurpSocksRotate implements BurpExtension {
         JTextField addPortField = new JTextField(5);
         JButton addButton = new JButton("Add Proxy");
         
-        singleAddPanel.add(protocolLabel);
-        singleAddPanel.add(protocolCombo);
-        singleAddPanel.add(hostLabel);
-        singleAddPanel.add(hostField);
-        singleAddPanel.add(portLabel);
-        singleAddPanel.add(addPortField);
-        singleAddPanel.add(addButton);
+        separateInputPanel.add(protocolLabel);
+        separateInputPanel.add(protocolCombo);
+        separateInputPanel.add(hostLabel);
+        separateInputPanel.add(hostField);
+        separateInputPanel.add(portLabel);
+        separateInputPanel.add(addPortField);
+        separateInputPanel.add(addButton);
         
         addButton.addActionListener(_ -> {
             String protocol = (String) protocolCombo.getSelectedItem();
@@ -483,14 +551,41 @@ public class BurpSocksRotate implements BurpExtension {
             }
         });
         
+        // Add the panels to the singleAddPanel
+        singleAddPanel.add(unifiedInputPanel, BorderLayout.NORTH);
+        singleAddPanel.add(dividerPanel, BorderLayout.CENTER);
+        singleAddPanel.add(separateInputPanel, BorderLayout.SOUTH);
+        
         // Bulk proxy panel
         JPanel bulkPanel = new JPanel(new BorderLayout(5, 5));
         JTextArea bulkTextArea = new JTextArea(5, 30);
         bulkTextArea.setToolTipText("Enter one proxy per line in format socks5://host:port or socks4://host:port");
+        
+        // Add placeholder text to make it clearer what's expected
+        bulkTextArea.setText("# Enter one proxy per line\n# Examples:\n# socks5://192.168.1.1:1080\n# socks4://proxy.example.com:1080");
+        bulkTextArea.setForeground(Color.GRAY);
+        bulkTextArea.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                if (bulkTextArea.getText().startsWith("# Enter")) {
+                    bulkTextArea.setText("");
+                    bulkTextArea.setForeground(Color.BLACK);
+                }
+            }
+            
+            @Override
+            public void focusLost(FocusEvent e) {
+                if (bulkTextArea.getText().trim().isEmpty()) {
+                    bulkTextArea.setText("# Enter one proxy per line\n# Examples:\n# socks5://192.168.1.1:1080\n# socks4://proxy.example.com:1080");
+                    bulkTextArea.setForeground(Color.GRAY);
+                }
+            }
+        });
+        
         JScrollPane bulkScrollPane = new JScrollPane(bulkTextArea);
         JButton bulkAddButton = new JButton("Add Multiple Proxies");
         
-        bulkPanel.add(new JLabel("Enter multiple proxies (format: socks5://host:port, one per line):"), BorderLayout.NORTH);
+        bulkPanel.add(new JLabel("Enter multiple proxies (one per line):"), BorderLayout.NORTH);
         bulkPanel.add(bulkScrollPane, BorderLayout.CENTER);
         bulkPanel.add(bulkAddButton, BorderLayout.SOUTH);
         
