@@ -47,6 +47,9 @@ public class SocksProxyService {
     private final ReadWriteLock proxyListLock;
     private final Random random = new Random();
     
+    // Logging configuration
+    private boolean loggingEnabled = true;
+    
     // NIO components
     private Selector selector;
     private ServerSocketChannel serverChannel;
@@ -1875,17 +1878,29 @@ public class SocksProxyService {
     }
     
     /**
+     * Sets whether logging is enabled.
+     */
+    public void setLoggingEnabled(boolean enabled) {
+        this.loggingEnabled = enabled;
+        logInfo("Logging " + (enabled ? "enabled" : "disabled"));
+    }
+
+    /**
      * Logs an info message.
      */
     private void logInfo(String message) {
-        logging.logToOutput("[SocksProxy-NIO] " + message);
+        if (loggingEnabled) {
+            logging.logToOutput("[SocksProxy-NIO] " + message);
+        }
     }
 
     /**
      * Logs an error message.
      */
     private void logError(String message) {
-        logging.logToError("[SocksProxy-NIO] ERROR: " + message);
+        if (loggingEnabled) {
+            logging.logToError("[SocksProxy-NIO] ERROR: " + message);
+        }
     }
 
     /**

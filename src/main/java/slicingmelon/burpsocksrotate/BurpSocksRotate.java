@@ -112,6 +112,9 @@ public class BurpSocksRotate implements BurpExtension {
         
         // Set bypass collaborator setting
         socksProxyService.setBypassCollaborator(bypassCollaborator);
+        
+        // Set logging status
+        socksProxyService.setLoggingEnabled(loggingEnabled);
 
         // Create and register the UI
         SwingUtilities.invokeLater(() -> {
@@ -1492,6 +1495,9 @@ public class BurpSocksRotate implements BurpExtension {
             loggingEnabled = enableLoggingCheckbox.isSelected();
             saveSettings();
             logMessage("Logging " + (loggingEnabled ? "enabled" : "disabled"));
+            if (socksProxyService != null) {
+                socksProxyService.setLoggingEnabled(loggingEnabled);
+            }
         });
         
         gbc.gridx = 1;
