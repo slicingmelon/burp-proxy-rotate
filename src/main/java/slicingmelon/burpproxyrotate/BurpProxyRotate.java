@@ -65,7 +65,7 @@ public class BurpProxyRotate implements BurpExtension {
     private int maxConnectionsPerProxy = 50;
     private boolean loggingEnabled = true;
     private boolean bypassCollaborator = true; // Default to bypass Collaborator
-    private boolean useRandomProxySelection = false; // Default to round-robin selection
+    private boolean useRandomProxySelection = true; // Default to random proxy selection
     
     // UI components for settings
     private JSpinner bufferSizeSpinner;
