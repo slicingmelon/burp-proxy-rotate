@@ -329,6 +329,11 @@ public class ProxyRotateService {
                     SelectionKey key = keyIterator.next();
                     keyIterator.remove();
                     
+                    if (key == null) {
+                        logError("Null SelectionKey encountered, skipping");
+                        continue;
+                    }
+                    
                     try {
                         if (!key.isValid()) {
                             continue;
@@ -348,7 +353,33 @@ public class ProxyRotateService {
                         logError("I/O error on key operation: " + e.getMessage());
                         cancelAndCloseKey(key);
                     } catch (Exception e) {
-                        logError("Unexpected error processing key: " + e.getMessage());
+                        // Improved error logging with exception class name and cause
+                        String errorMsg = "Exception " + e.getClass().getName() + " while processing key";
+                        if (e.getMessage() != null) {
+                            errorMsg += ": " + e.getMessage();
+                        }
+                        if (e.getCause() != null) {
+                            errorMsg += " - caused by: " + e.getCause().toString();
+                        }
+                        
+                        // Add additional context information
+                        try {
+                            if (key.channel() != null) {
+                                errorMsg += " - on channel: " + key.channel().toString();
+                                
+                                if (key.channel() instanceof SocketChannel) {
+                                    SocketChannel channel = (SocketChannel) key.channel();
+                                    if (channel.isConnected() && channel.socket() != null) {
+                                        errorMsg += " (" + channel.socket().getInetAddress() + ":" + channel.socket().getPort() + ")";
+                                    }
+                                }
+                            }
+                            errorMsg += " - interestOps: " + key.interestOps();
+                        } catch (Exception ex) {
+                            // Ignore errors while gathering additional info
+                        }
+                        
+                        logError(errorMsg);
                         cancelAndCloseKey(key);
                     }
                 }
@@ -360,11 +391,15 @@ public class ProxyRotateService {
                     try {
                         Selector newSelector = Selector.open();
                         for (SelectionKey key : selector.keys()) {
-                            if (key.isValid() && key.channel().isOpen()) {
-                                int ops = key.interestOps();
-                                Object att = key.attachment();
-                                key.cancel();
-                                key.channel().register(newSelector, ops, att);
+                            if (key != null && key.isValid() && key.channel() != null && key.channel().isOpen()) {
+                                try {
+                                    int ops = key.interestOps();
+                                    Object att = key.attachment();
+                                    key.cancel();
+                                    key.channel().register(newSelector, ops, att);
+                                } catch (Exception ex) {
+                                    logError("Error while migrating key to new selector: " + ex.toString());
+                                }
                             }
                         }
                         selector.close();
@@ -375,6 +410,25 @@ public class ProxyRotateService {
                         logError("Failed to recreate selector: " + ex.getMessage());
                         throw e; // Rethrow if we can't recover
                     }
+                }
+            } catch (Exception e) {
+                // Catch any other unexpected exceptions in the main loop
+                String errorMsg = "Unexpected exception in selector loop: " + e.getClass().getName();
+                if (e.getMessage() != null) {
+                    errorMsg += " - " + e.getMessage();
+                }
+                logError(errorMsg);
+                
+                // If we're not running anymore, just break out of the loop
+                if (!serverRunning) {
+                    break;
+                }
+                
+                // Add a small delay before continuing to avoid busy-looping on errors
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
                 }
             }
         }
@@ -715,7 +769,15 @@ public class ProxyRotateService {
      * Handles a read event on a socket.
      */
     private void handleRead(SelectionKey key) throws IOException {
+        if (key == null || !key.isValid()) {
+            throw new IOException("Invalid key in handleRead");
+        }
+        
         SocketChannel channel = (SocketChannel) key.channel();
+        if (channel == null || !channel.isOpen()) {
+            throw new IOException("Channel is null or closed in handleRead");
+        }
+        
         lastActivityTime.put(channel, System.currentTimeMillis());
         
         // Determine if this is a client or proxy channel
@@ -974,7 +1036,15 @@ public class ProxyRotateService {
      * Handles a write event on a socket.
      */
     private void handleWrite(SelectionKey key) throws IOException {
+        if (key == null || !key.isValid()) {
+            throw new IOException("Invalid key in handleWrite");
+        }
+        
         SocketChannel channel = (SocketChannel) key.channel();
+        if (channel == null || !channel.isOpen()) {
+            throw new IOException("Channel is null or closed in handleWrite");
+        }
+        
         lastActivityTime.put(channel, System.currentTimeMillis());
         
         // Determine if this is a client or proxy channel
@@ -1791,55 +1861,95 @@ public class ProxyRotateService {
      * Closes a connection and cleans up resources.
      */
     private void closeConnection(SocketChannel clientChannel) {
-        // Get the proxy channel if it exists
-        SocketChannel proxyChannel = proxyConnections.remove(clientChannel);
+        if (clientChannel == null) {
+            return;
+        }
         
-        // Get the state
-        ConnectionState state = connectionStates.remove(clientChannel);
-        
-        // Close the client channel
-        cancelAndCloseChannel(clientChannel);
-        
-        // Close the proxy channel if it exists
-        if (proxyChannel != null) {
-            cancelAndCloseChannel(proxyChannel);
+        try {
+            // Get the proxy channel if it exists
+            SocketChannel proxyChannel = proxyConnections.remove(clientChannel);
             
-            // Update proxy connections counter
-            if (state != null && state.selectedProxy != null) {
-                String proxyKey = state.selectedProxy.getHost() + ":" + state.selectedProxy.getPort();
-                AtomicInteger count = connectionsPerProxy.get(proxyKey);
-                if (count != null) {
-                    count.decrementAndGet();
+            // Get the state
+            ConnectionState state = connectionStates.remove(clientChannel);
+            
+            // Close the client channel
+            cancelAndCloseChannel(clientChannel);
+            
+            // Close the proxy channel if it exists
+            if (proxyChannel != null) {
+                cancelAndCloseChannel(proxyChannel);
+                
+                // Update proxy connections counter
+                if (state != null && state.selectedProxy != null) {
+                    String proxyKey = state.selectedProxy.getHost() + ":" + state.selectedProxy.getPort();
+                    AtomicInteger count = connectionsPerProxy.get(proxyKey);
+                    if (count != null) {
+                        count.decrementAndGet();
+                    }
                 }
             }
+            
+            // Remove from activity tracking
+            lastActivityTime.remove(clientChannel);
+            if (proxyChannel != null) {
+                lastActivityTime.remove(proxyChannel);
+            }
+            
+            // Update connection counter
+            activeConnectionCount.decrementAndGet();
+        } catch (Exception e) {
+            logError("Error in closeConnection: " + e.toString());
+            
+            // Make best effort to decrement counter even if there's an error
+            try {
+                activeConnectionCount.updateAndGet(current -> Math.max(0, current - 1));
+            } catch (Exception ex) {
+                // Ignore
+            }
         }
-        
-        // Remove from activity tracking
-        lastActivityTime.remove(clientChannel);
-        if (proxyChannel != null) {
-            lastActivityTime.remove(proxyChannel);
-        }
-        
-        // Update connection counter
-        activeConnectionCount.decrementAndGet();
     }
     
     /**
      * Cancels a selection key and closes the channel.
      */
     private void cancelAndCloseKey(SelectionKey key) {
-        if (key.channel() instanceof SocketChannel) {
-            SocketChannel channel = (SocketChannel) key.channel();
-            cancelAndCloseChannel(channel);
+        if (key == null) {
+            return;
         }
         
-        key.cancel();
+        try {
+            // Get the channel before canceling the key
+            Object attachment = key.attachment();
+            java.nio.channels.Channel channel = key.channel();
+            
+            // Cancel the key first
+            key.cancel();
+            
+            // Close the channel if available
+            if (channel != null) {
+                if (channel instanceof SocketChannel) {
+                    cancelAndCloseChannel((SocketChannel) channel);
+                } else {
+                    try {
+                        channel.close();
+                    } catch (IOException e) {
+                        // Ignore
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logError("Error in cancelAndCloseKey: " + e.toString());
+        }
     }
     
     /**
      * Cancels a channel's selection key and closes the channel.
      */
     private void cancelAndCloseChannel(SocketChannel channel) {
+        if (channel == null) {
+            return;
+        }
+        
         try {
             // Cancel the selection key
             SelectionKey key = channel.keyFor(selector);
@@ -1849,11 +1959,61 @@ public class ProxyRotateService {
             
             // Close the channel
             if (channel.isOpen()) {
-                channel.socket().setSoLinger(true, 0); // Force immediate close
-                channel.close();
+                try {
+                    Socket socket = channel.socket();
+                    if (socket != null) {
+                        try {
+                            socket.setSoLinger(true, 0); // Force immediate close
+                        } catch (Exception e) {
+                            // Ignore socket option errors
+                        }
+                    }
+                } catch (Exception e) {
+                    // Ignore socket access errors
+                }
+                
+                try {
+                    channel.close();
+                } catch (IOException e) {
+                    // Ignore close errors
+                }
             }
-        } catch (IOException e) {
-            logError("Error closing channel: " + e.getMessage());
+        } catch (Exception e) {
+            logError("Error closing channel: " + e.toString());
+        } finally {
+            // Make sure to clean up any references in our tracking collections
+            try {
+                lastActivityTime.remove(channel);
+                
+                // If this is a client channel, remove from connection states
+                if (connectionStates.containsKey(channel)) {
+                    connectionStates.remove(channel);
+                }
+                
+                // Remove from proxy connections (in both directions)
+                SocketChannel pairedChannel = proxyConnections.remove(channel);
+                if (pairedChannel != null) {
+                    // Also try to close the paired channel
+                    try {
+                        if (pairedChannel.isOpen()) {
+                            pairedChannel.close();
+                        }
+                    } catch (Exception e) {
+                        // Ignore
+                    }
+                    lastActivityTime.remove(pairedChannel);
+                }
+                
+                // Check if this is a proxy channel and remove from the reverse mapping
+                for (Map.Entry<SocketChannel, SocketChannel> entry : new ArrayList<>(proxyConnections.entrySet())) {
+                    if (entry.getValue() == channel) {
+                        proxyConnections.remove(entry.getKey());
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                // Ignore cleanup errors
+            }
         }
     }
     
