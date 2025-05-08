@@ -111,7 +111,7 @@ public class ProxyRotateService {
     private final Object proxyRotationLock = new Object();
 
     /**
-     * Creates a new SocksProxyService.
+     * Creates a new ProxyRotateService.
      */
     public ProxyRotateService(List<ProxyEntry> proxyList, ReadWriteLock proxyListLock, Logging logging) {
         this.proxyList = proxyList;
@@ -148,7 +148,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Sets the service settings with explicit connection pool settings.
+     * Sets the proxy rotate service settings with explicit connection pool settings.
      */
     public void setSettings(int bufferSize, int connectionTimeout, int socketTimeout, 
                           int maxRetryCount, int maxConnectionsPerProxy, int idleTimeoutSec) {
@@ -187,7 +187,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Starts the SOCKS proxy rotation service using NIO.
+     * Starts the Proxy Rotate Service using Java NIO.
      */
     public void start(int port, Runnable onSuccess, Consumer<String> onFailure) {
         if (serverRunning) {
@@ -268,7 +268,7 @@ public class ProxyRotateService {
                 }
             }, 30, 30, TimeUnit.SECONDS);
             
-            logInfo("Burp SOCKS Rotate server started on localhost:" + localPort + " (NIO mode)");
+            logInfo("Burp Proxy Rotate service started on localhost:" + localPort + " (NIO mode)");
             onSuccess.run();
             
         } catch (IOException e) {
@@ -385,11 +385,11 @@ public class ProxyRotateService {
      */
     public void stop() {
         if (!serverRunning) {
-            logInfo("Service is not running.");
+            logInfo("Burp Proxy Rotate service is not running.");
             return;
         }
 
-        logInfo("Burp SOCKS Rotate server stopping...");
+        logInfo("Burp Proxy Rotate service stopping...");
         serverRunning = false;
         
         try {
@@ -1226,13 +1226,25 @@ public class ProxyRotateService {
                 byte[] ipv6 = new byte[16];
                 buffer.get(ipv6);
                 
-                // Format IPv6 address
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < 16; i += 2) {
-                    if (i > 0) sb.append(":");
-                    sb.append(String.format("%02x%02x", ipv6[i], ipv6[i+1]));
+                // Format IPv6 address properly using Java's InetAddress
+                try {
+                    java.net.InetAddress inetAddress = java.net.InetAddress.getByAddress(ipv6);
+                    targetHost = inetAddress.getHostAddress();
+                    
+                    // Ensure the address is in standard format with all colons
+                    // Remove IPv6 scope id if present (anything after %)
+                    if (targetHost.contains("%")) {
+                        targetHost = targetHost.substring(0, targetHost.indexOf("%"));
+                    }
+                } catch (Exception e) {
+                    // Fallback to manual formatting if InetAddress fails
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < 16; i += 2) {
+                        if (i > 0) sb.append(":");
+                        sb.append(String.format("%02x%02x", ipv6[i] & 0xFF, ipv6[i+1] & 0xFF));
+                    }
+                    targetHost = sb.toString();
                 }
-                targetHost = sb.toString();
                 break;
                 
             default:
@@ -2063,17 +2075,28 @@ public class ProxyRotateService {
             }
             
         } else if (state.addressType == 4) { // IPv6
-            // Not fully implemented in this example
+            // Create a request with the correct IPv6 address
             request = ByteBuffer.allocate(22);
-            request.put((byte) 5);
-            request.put((byte) 1);
-            request.put((byte) 0);
-            request.put((byte) 4);
+            request.put((byte) 5); // SOCKS version
+            request.put((byte) 1); // CONNECT command
+            request.put((byte) 0); // Reserved
+            request.put((byte) 4); // IPv6 address type
             
-            // This is a simplified implementation
-            // Add proper IPv6 parsing for production
-            for (int i = 0; i < 16; i++) {
-                request.put((byte) 0);
+            // Parse the IPv6 address and add it to the request
+            try {
+                // Use Java's built-in InetAddress to parse the IPv6 address correctly
+                java.net.Inet6Address inet6Address = (java.net.Inet6Address) 
+                    java.net.InetAddress.getByName(state.targetHost);
+                
+                // Get the raw bytes of the IPv6 address (16 bytes)
+                byte[] ipv6Bytes = inet6Address.getAddress();
+                request.put(ipv6Bytes);
+            } catch (Exception e) {
+                logError("Error parsing IPv6 address: " + state.targetHost + " - " + e.getMessage());
+                // If parsing fails, use a zero address as fallback
+                for (int i = 0; i < 16; i++) {
+                    request.put((byte) 0);
+                }
             }
             
         } else { // Domain name
