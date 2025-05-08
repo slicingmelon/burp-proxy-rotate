@@ -23,7 +23,7 @@ A Burp Suite extension that routes each HTTP request through a random proxy from
     -   Configure local listening port (manual or random).
     -   Adjust buffer sizes, idle timeouts, and maximum connections per proxy.
     -   Choose between "Round-Robin" or "Random" proxy selection strategies.
--   **Detailed Logging & Status:** Real-time logging of operations and connection statistics.
+-   **Detailed Logging & Status:** Real-time logging and connection statistics.
 
 ## Technical Architecture & Performance
 
@@ -124,5 +124,5 @@ The extension provides a user-friendly interface with two main tabs:
 
 ### Log Panel (Bottom of Main Tab)
 
--   Displays real-time operational logs from the extension, including connection attempts, proxy selections, errors, and status changes.
+-   Displays real-time logs from the extension, including connection attempts, proxy selections, errors, and status changes.
 
