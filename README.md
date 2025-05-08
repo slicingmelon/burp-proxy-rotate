@@ -1,6 +1,6 @@
 # Burp Proxy Rotate
 
-A Burp Suite extension that routes each HTTP request through a random proxy from a configurable list. Each new connection from Burp is assigned a proxy from your list, ensuring diverse egress points for your testing activities.
+Burp Proxy Rotate is a Burp Suite extension that routes each HTTP request through a random proxy from a configurable list. Each new connection from Burp is assigned a proxy, enabling IP rotation for better anonymity, WAF evasion, geo-targeted testing, and other advanced use cases. This ensures requests exit through different IPs and can help simulate distributed attack patterns during security assessments.
 
 ## Key Features
 
@@ -61,7 +61,7 @@ Burp Proxy Rotate is designed for stability and speed, utilizing modern Java fea
 
 ## Demo
 
-![Demo](images/burp-proxy-rorate-demo.gif)
+![Demo](images/burp-proxy-rotate-demo.gif)
 
 ## How to Use
 
@@ -75,7 +75,7 @@ Burp Proxy Rotate is designed for stability and speed, utilizing modern Java fea
         *   **Format:** `protocol://host:port` (e.g., `socks5://127.0.0.1:1080`)
         *   **Authenticated Format:** `protocol://username:password@host:port` (e.g., `http://user:pass@proxy.example.com:8080`)
 3.  **Validate Proxies (Recommended):**
-    *   Click "Validate All" to check the status of your added proxies. Inactive or problematic proxies will be indicated and exluded. 
+    *   Click "Validate All" to check the status of your added proxies. Inactive or problematic proxies will be indicated and excluded. 
 4.  **Enable Extension**
     *   Click "Enable Proxy Rotate". The status will update to "Running on 127.0.0.1:PORT".
     *   Configure the "Local port" if needed (or use random port -- recommended).
@@ -90,7 +90,7 @@ The extension provides a user-friendly interface with two main tabs:
 -   **Local Port:** Configure the port on `localhost` where the Proxy Rotate service will listen. Can be set to a specific port or "Random Port" (default option and recommended).
 -   **Service Control:**
     -   `Enable Proxy Rotate`: Enables the extension and starts the local proxy service.
-    -   `Disable Proxy Rotate`: Disables the extesion and stops the local proxy service.
+    -   `Disable Proxy Rotate`: Disables the extension and stops the local proxy service.
 -   **Status & Stats:**
     -   `Status`: Shows if the service is "Stopped", "Running on 127.0.0.1:PORT", or "Failed to start".
     -   `Stats`: Displays the number of active connections and details about proxy utilization (e.g., "Active connections: 5 | Using 3 proxies, busiest: ...").

@@ -2,7 +2,7 @@ plugins {
     id 'java'
 }
 
-def BASE_VERSION = '1.0'
+project.ext.BASE_VERSION = '1.0'
 
 def getBranchVersion() {
     def process = "git rev-parse --abbrev-ref HEAD".execute()
@@ -11,12 +11,12 @@ def getBranchVersion() {
     def sanitizedBranchName = branch.replace('/', '-')
 
     if (branch == 'main') {
-        return "${BASE_VERSION}-main"
+        return "${project.ext.BASE_VERSION}-main"
     } else if (branch.startsWith('release/')) {
         def releaseVersion = branch.replace('release/', '')
         return "${releaseVersion}-beta"
     } else {
-        return "${BASE_VERSION}-${sanitizedBranchName}-dev"
+        return "${project.ext.BASE_VERSION}-${sanitizedBranchName}-dev"
     }
 }
 
