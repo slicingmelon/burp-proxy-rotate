@@ -3,7 +3,7 @@
  * 
  * This extension routes each HTTP request through a different SOCKS proxy from a provided list.
  */
-package slicingmelon.burpsocksrotate;
+package slicingmelon.burpproxyrotate;
 
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
@@ -32,13 +32,13 @@ import java.util.Random;
 /**
  * Main Burp extension class for SOCKS proxy rotation.
  */
-public class BurpSocksRotate implements BurpExtension {
+public class BurpProxyRotate implements BurpExtension {
     
     // Core components
     private MontoyaApi api;
     private List<ProxyEntry> proxyList;
     private final ReadWriteLock proxyListLock = new ReentrantReadWriteLock();
-    private SocksProxyService socksProxyService;
+    private ProxyRotateService socksProxyService;
     
     // UI components
     private ProxyTableModel proxyTableModel;
@@ -107,7 +107,7 @@ public class BurpSocksRotate implements BurpExtension {
         loadSavedProxies();
         
         // Initialize the SOCKS Proxy Service - much simpler now
-        socksProxyService = new SocksProxyService(proxyList, proxyListLock, api.logging());
+        socksProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
         socksProxyService.setExtension(this);
         
         // Set bypass collaborator setting

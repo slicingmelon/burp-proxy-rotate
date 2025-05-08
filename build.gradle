@@ -30,5 +30,5 @@ jar {
         configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
     }
     
-    archiveFileName = "burp-upstream-proxy-rotate-${version}.jar"
+    archiveFileName = "burp-proxy-rotate-${version}.jar"
 }

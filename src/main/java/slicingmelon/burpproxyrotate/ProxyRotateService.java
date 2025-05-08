@@ -1,4 +1,4 @@
-package slicingmelon.burpsocksrotate;
+package slicingmelon.burpproxyrotate;
 
 import burp.api.montoya.logging.Logging;
 
@@ -29,7 +29,7 @@ import java.util.function.Consumer;
  * A service that randomly rotates SOCKS proxies for Burp Suite using Java NIO.
  * For each new connection, a different active SOCKS proxy is chosen.
  */
-public class SocksProxyService {
+public class ProxyRotateService {
     // Default settings
     private int bufferSize = 8092; // 8KB
     private int connectionTimeout = 20000; // 20 seconds
@@ -66,7 +66,7 @@ public class SocksProxyService {
     private final Map<SocketChannel, SocketChannel> proxyConnections = new ConcurrentHashMap<>();
     private final Map<SocketChannel, Long> lastActivityTime = new ConcurrentHashMap<>();
     
-    private BurpSocksRotate extension;
+    private BurpProxyRotate extension;
 
     // Connection state enum
     private enum ConnectionStage {
@@ -105,7 +105,7 @@ public class SocksProxyService {
     /**
      * Creates a new SocksProxyService.
      */
-    public SocksProxyService(List<ProxyEntry> proxyList, ReadWriteLock proxyListLock, Logging logging) {
+    public ProxyRotateService(List<ProxyEntry> proxyList, ReadWriteLock proxyListLock, Logging logging) {
         this.proxyList = proxyList;
         this.proxyListLock = proxyListLock;
         this.logging = logging;
@@ -118,7 +118,7 @@ public class SocksProxyService {
     /**
      * Sets the extension reference for callbacks to update the UI.
      */
-    public void setExtension(BurpSocksRotate extension) {
+    public void setExtension(BurpProxyRotate extension) {
         this.extension = extension;
     }
     

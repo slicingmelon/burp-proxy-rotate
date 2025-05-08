@@ -1,4 +1,4 @@
-package slicingmelon.burpsocksrotate;
+package slicingmelon.burpproxyrotate;
 
 /**
  * Represents a SOCKS proxy entry with host, port and status information.
