@@ -38,7 +38,7 @@ import java.nio.BufferOverflowException;
  * The core service that randomly rotates each HTTP request through a different proxy from a provided list.
  */
 public class ProxyRotateService {
-    // Default settings - use same values as in BurpProxyRotate
+    // Default settings
     private static final int DEFAULT_BUFFER_SIZE = 8092; // 8KB
     private static final int DEFAULT_IDLE_TIMEOUT = 60; // Idle timeout in seconds
     private static final int DEFAULT_MAX_CONNECTIONS_PER_PROXY = 50;
@@ -160,7 +160,7 @@ public class ProxyRotateService {
     private final Object proxyRotationLock = new Object();
 
     /**
-     * Creates a new ProxyRotateService.
+     * Creates a new ProxyRotateService
      */
     public ProxyRotateService(List<ProxyEntry> proxyList, ReadWriteLock proxyListLock, Logging logging) {
         this.proxyList = proxyList;
@@ -173,14 +173,14 @@ public class ProxyRotateService {
     }
 
     /**
-     * Sets the extension reference for callbacks to update the UI.
+     * ref for callbacks to update the UI
      */
     public void setExtension(BurpProxyRotate extension) {
         this.extension = extension;
     }
     
     /**
-     * Sets the service settings.
+     * Proxy Service settings
      */
     public void setSettings(int bufferSize, int idleTimeoutSec, int maxConnectionsPerProxy) {
         boolean changed = false;
@@ -208,7 +208,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Resets settings to default values.
+     * Reset default settings
      */
     public void resetToDefaults() {
         setSettings(DEFAULT_BUFFER_SIZE, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS_PER_PROXY);
@@ -219,28 +219,28 @@ public class ProxyRotateService {
     }
 
     /**
-     * Checks if the service is running.
+     * Check if the service is running
      */
     public boolean isRunning() {
         return serverRunning;
     }
     
     /**
-     * Gets the local port the service is running on.
+     * Returns local port (of the proxy service)
      */
     public int getLocalPort() {
         return localPort;
     }
 
     /**
-     * Gets the number of active connections.
+     * Number of active connections
      */
     public int getActiveConnectionCount() {
         return activeConnectionCount.get();
     }
 
     /**
-     * Starts the Proxy Rotate Service using Java NIO.
+     * Start Proxy Rotate Service
      */
     public void start(int port, Runnable onSuccess, Consumer<String> onFailure) {
         if (serverRunning) {
@@ -251,10 +251,9 @@ public class ProxyRotateService {
         this.localPort = port;
         
         try {
-            // Performance tuning: use enhanced selector provider
             selector = SelectorProvider.provider().openSelector();
             
-            // Create a new non-blocking server socket channel with optimized config
+            // Create a new non-blocking server socket channel
             serverChannel = ServerSocketChannel.open();
             serverChannel.configureBlocking(false);
             
@@ -308,7 +307,7 @@ public class ProxyRotateService {
                 }
             });
             
-            // Start cleanup thread - run every 30 seconds (reduced frequency)
+            // Start cleanup thread - run every 30 seconds (will add UI setting)
             cleanupScheduler.scheduleAtFixedRate(() -> {
                 try {
                     if (serverRunning) {
@@ -406,7 +405,6 @@ public class ProxyRotateService {
                         logError("I/O error on key operation: " + e.getMessage());
                         cancelAndCloseKey(key);
                     } catch (Exception e) {
-                        // Improved error logging with exception class name and cause
                         String errorMsg = "Exception " + e.getClass().getName() + " while processing key";
                         if (e.getMessage() != null) {
                             errorMsg += ": " + e.getMessage();
@@ -415,7 +413,6 @@ public class ProxyRotateService {
                             errorMsg += " - caused by: " + e.getCause().toString();
                         }
                         
-                        // Add additional context information
                         try {
                             if (key.channel() != null) {
                                 errorMsg += " - on channel: " + key.channel().toString();
@@ -429,7 +426,7 @@ public class ProxyRotateService {
                             }
                             errorMsg += " - interestOps: " + key.interestOps();
                         } catch (Exception ex) {
-                            // Ignore errors while gathering additional info
+                            // pass
                         }
                         
                         logError(errorMsg);
@@ -488,7 +485,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Stops the SOCKS proxy rotation service.
+     * Stops the Proxy Rotate service
      */
     public void stop() {
         if (!serverRunning) {
@@ -529,7 +526,7 @@ public class ProxyRotateService {
                     try {
                         channel.close();
                     } catch (IOException e) {
-                        // Ignore
+                        // pass
                     }
                 }
                 connectionStates.clear();
@@ -559,19 +556,17 @@ public class ProxyRotateService {
     }
 
     /**
-     * Handles an accept event on the server socket.
+     * Handles an accept event on the server socket
      */
     private void handleAccept(SelectionKey key) throws IOException {
         ServerSocketChannel serverChannel = (ServerSocketChannel) key.channel();
         SocketChannel clientChannel = serverChannel.accept();
         clientChannel.configureBlocking(false);
         
-        // Set socket options
         Socket socket = clientChannel.socket();
         socket.setTcpNoDelay(true);
         socket.setKeepAlive(true);
         
-        // Register for read events
         clientChannel.register(selector, SelectionKey.OP_READ);
         
         // Create and store connection state
@@ -579,14 +574,13 @@ public class ProxyRotateService {
         connectionStates.put(clientChannel, state);
         lastActivityTime.put(clientChannel, System.currentTimeMillis());
         
-        // Increment connection counter
         activeConnectionCount.incrementAndGet();
         
         logInfo("New client connection accepted");
     }
     
     /**
-     * Handles a connect event on a client socket.
+     * Handles a connect event on a client socket
      */
     private void handleConnect(SelectionKey key) throws IOException {
         SocketChannel proxyChannel = (SocketChannel) key.channel();
@@ -615,11 +609,10 @@ public class ProxyRotateService {
                     return;
                 }
                 
-                // Update connection activity time
                 lastActivityTime.put(proxyChannel, System.currentTimeMillis());
                 lastActivityTime.put(clientChannel, System.currentTimeMillis());
                 
-                // Check if this is a direct connection (bypassing proxy for Collaborator)
+                // Check if this is a direct connection (bypassing proxy for collaborator)
                 if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
                     logInfo("Direct connection established to " + state.targetHost + ":" + state.targetPort);
                     
@@ -627,12 +620,11 @@ public class ProxyRotateService {
                         // Configure socket for optimal SSL/TLS handling
                         Socket socket = proxyChannel.socket();
                         
-                        // Increase buffer sizes substantially for SSL/TLS data
-                        int largeBuffer = Math.max(bufferSize * 4, 262144); // At least 256KB
+                        // Increase buffer sizes for SSL/TLS data
+                        int largeBuffer = Math.max(bufferSize * 4, 262144); // at least 256KB
                         socket.setReceiveBufferSize(largeBuffer);
                         socket.setSendBufferSize(largeBuffer);
                         
-                        // Performance tuning
                         socket.setTcpNoDelay(true);
                         socket.setKeepAlive(true);
                         socket.setSoTimeout(0);
@@ -642,7 +634,6 @@ public class ProxyRotateService {
                         state.inputBuffer = ByteBuffer.allocateDirect(262144);
                         state.outputBuffer = ByteBuffer.allocateDirect(262144);
                     } catch (Exception e) {
-                        // Just log but continue - socket options are optimizations, not critical
                         logError("Error optimizing direct connection socket: " + e.getMessage());
                     }
                     
@@ -653,7 +644,7 @@ public class ProxyRotateService {
                         sendSocks4SuccessResponse(clientChannel);
                     }
                     
-                    // Update state to connected
+                    // Update state
                     state.stage = ConnectionStage.PROXY_CONNECTED;
                     
                     // Register for reading
@@ -676,8 +667,7 @@ public class ProxyRotateService {
                         return;
                     }
                     
-                    // Regular proxy connection logic continues here for SOCKS proxies
-                    // Register for reading from the proxy
+                    // Regular proxy connection logic continues for SOCKS proxies
                     proxyChannel.register(selector, SelectionKey.OP_READ);
                     
                     // Setup the SOCKS handshake with the proxy
@@ -686,14 +676,14 @@ public class ProxyRotateService {
                         ByteBuffer handshake;
                         
                         if (state.selectedProxy.isAuthenticated()) {
-                            // We support both no-auth (0x00) and username/password (0x02)
+                            // support both no-auth (0x00) and username/password (0x02)
                             handshake = ByteBuffer.allocate(4);
                             handshake.put((byte) 0x05); // SOCKS version
                             handshake.put((byte) 0x02); // 2 auth methods
                             handshake.put((byte) 0x00); // No auth
                             handshake.put((byte) 0x02); // Username/password auth
                         } else {
-                            // Only support no-auth
+                            // only support no-auth
                             handshake = ByteBuffer.allocate(3);
                             handshake.put((byte) 0x05); // SOCKS version
                             handshake.put((byte) 0x01); // 1 auth method
@@ -719,7 +709,6 @@ public class ProxyRotateService {
         } catch (IOException e) {
             logError("Connection failed: " + e.getMessage());
             
-            // Find the associated client channel and inform about the error
             for (Map.Entry<SocketChannel, SocketChannel> entry : proxyConnections.entrySet()) {
                 if (entry.getValue() == proxyChannel) {
                     SocketChannel clientChannel = entry.getKey();
@@ -728,31 +717,24 @@ public class ProxyRotateService {
                     if (state != null) {
                         ProxyEntry proxy = state.selectedProxy;
                         
-                        // Check if this was a direct connection attempt
                         if (proxy != null && "direct".equals(proxy.getProtocol())) {
                             logError("Direct connection to " + state.targetHost + " failed, falling back to proxy");
                             
-                            // Remove the direct proxy connection
                             proxyConnections.remove(clientChannel);
                             
-                            // Try connecting through a regular proxy as fallback
                             try {
                                 connectThroughProxy(clientChannel, state);
-                                // If we get here, the proxy connection is being established
                                 return;
                             } catch (IOException ex) {
                                 logError("Fallback to proxy also failed: " + ex.getMessage());
-                                // Fall through to send error response and close
                             }
                         } else if (proxy != null) {
                             // Regular proxy failure
-                            // Notify extension about proxy failure
                             if (extension != null) {
                                 extension.notifyProxyFailure(proxy.getHost(), proxy.getPort(), e.getMessage());
                             }
                         }
                         
-                        // Send error response based on SOCKS version
                         if (state.socksVersion == 5) {
                             sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
                         } else {
@@ -785,22 +767,17 @@ public class ProxyRotateService {
         
         String proxyKey = proxy.getHost() + ":" + proxy.getPort();
         
-        // Log the fallback
         logInfo("Fallback: Using proxy " + proxy.getProtocol() + "://" + proxyKey + 
                 " for target: " + state.targetHost + ":" + state.targetPort);
         
-        // Increment connection counter
         connectionsPerProxy.computeIfAbsent(proxyKey, _ -> new AtomicInteger(0)).incrementAndGet();
         
-        // Save the selected proxy
         state.selectedProxy = proxy;
         
-        // Create and configure the proxy socket channel
         SocketChannel proxyChannel = SocketChannel.open();
         proxyChannel.configureBlocking(false);
         Socket proxySocket = proxyChannel.socket();
         
-        // Set socket options
         proxySocket.setTcpNoDelay(true);
         
         // Associate the channels
@@ -820,7 +797,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Handles a read event on a socket.
+     * Handles a read event on a socket
      */
     private void handleRead(SelectionKey key) throws IOException {
         if (key == null || !key.isValid()) {
@@ -836,16 +813,14 @@ public class ProxyRotateService {
         
         // Determine if this is a client or proxy channel
         if (connectionStates.containsKey(channel)) {
-            // This is a client channel
             handleClientRead(key, channel);
         } else {
-            // This is a proxy channel
             handleProxyRead(key, channel);
         }
     }
     
     /**
-     * Handles a read event from a client.
+     * Handles a read event from a client
      */
     private void handleClientRead(SelectionKey key, SocketChannel clientChannel) throws IOException {
         ConnectionState state = connectionStates.get(clientChannel);
@@ -881,7 +856,6 @@ public class ProxyRotateService {
             closeConnection(clientChannel);
             return;
         } else if (bytesRead == 0) {
-            // No data read
             return;
         }
         
@@ -902,9 +876,7 @@ public class ProxyRotateService {
                     // Forward data to the proxy
                     SocketChannel proxyChannel = proxyConnections.get(clientChannel);
                     if (proxyChannel != null && proxyChannel.isConnected()) {
-                        // Check if this is a direct connection to a Collaborator domain
                         if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
-                            // For direct connections (especially HTTPS), we need to ensure efficient data handling
                             try {
                                 // For TLS traffic, make sure we're writing all data in a single call if possible
                                 int totalBytesToWrite = buffer.remaining();
@@ -960,21 +932,19 @@ public class ProxyRotateService {
             logError("Buffer overflow in handleClientRead: " + e.toString() + " - buffer capacity: " + 
                     buffer.capacity() + ", position: " + buffer.position() + ", limit: " + buffer.limit());
             
-            // Try to handle the error by allocating a larger buffer
             int newSize = buffer.capacity() * 2;
             logInfo("Increasing buffer size to " + newSize + " bytes");
             ByteBuffer newBuffer = ByteBuffer.allocateDirect(newSize);
-            buffer.flip(); // Prepare for reading
-            newBuffer.put(buffer); // Copy existing data
+            buffer.flip();
+            newBuffer.put(buffer);
             state.inputBuffer = newBuffer;
             
-            // Continue processing
             closeConnection(clientChannel);
         }
     }
     
     /**
-     * Handles a read event from a proxy.
+     * Handles a read event from a proxy
      */
     private void handleProxyRead(SelectionKey key, SocketChannel proxyChannel) throws IOException {
         // Find the associated client channel
@@ -1001,7 +971,6 @@ public class ProxyRotateService {
         
         // Check if we need to resize the buffer
         if (state.inputBuffer.capacity() < bufferSize) {
-            // Allocate a larger buffer
             ByteBuffer newBuffer = ByteBuffer.allocateDirect(bufferSize);
             state.inputBuffer = newBuffer;
         }
@@ -1020,12 +989,10 @@ public class ProxyRotateService {
         }
         
         if (bytesRead == -1) {
-            // Connection closed by proxy
             logInfo("Proxy/direct connection closed");
             closeConnection(clientChannel);
             return;
         } else if (bytesRead == 0) {
-            // No data read
             return;
         }
         
@@ -1081,7 +1048,7 @@ public class ProxyRotateService {
                 state.inputBuffer = newBuffer;
             }
             
-            // Close the connection to prevent further issues
+            // Close the connection
             closeConnection(clientChannel);
         }
     }
@@ -1091,9 +1058,8 @@ public class ProxyRotateService {
      */
     private void forwardDataToClient(SocketChannel clientChannel, ConnectionState state, 
                                     ByteBuffer buffer) throws IOException {
-        // Check if this is a direct connection to a Collaborator domain
         if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
-            // For HTTPS or other SSL/TLS traffic, handle larger chunks efficiently
+            // HTTPS or other SSL/TLS traffic
             try {
                 int totalBytesToWrite = buffer.remaining();
                 if (totalBytesToWrite > 0) {
@@ -1102,7 +1068,6 @@ public class ProxyRotateService {
                     // Attempt to write all data at once
                     int written = clientChannel.write(buffer);
                     
-                    // If we couldn't write everything at once, keep trying
                     if (buffer.hasRemaining()) {
                         logInfo("Couldn't write all data at once to client, remaining: " + buffer.remaining());
                         
@@ -1138,7 +1103,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Handles a write event on a socket.
+     * Handles a write event on a socket
      */
     private void handleWrite(SelectionKey key) throws IOException {
         if (key == null || !key.isValid()) {
@@ -1191,13 +1156,11 @@ public class ProxyRotateService {
                     // Clear the buffer
                     state.outputBuffer = ByteBuffer.allocateDirect(state.outputBuffer.capacity());
                     
-                    // Remove write interest, keep read interest
                     key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE);
                 }
             } catch (IOException e) {
                 logError("Error writing to channel: " + e.getMessage());
                 
-                // Clear write interest
                 key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE);
                 
                 // If this is a proxy channel, close the associated client connection
@@ -1220,7 +1183,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Process the initial data from a client to determine SOCKS protocol version.
+     * Process the initial data from a client to determine SOCKS protocol version
      */
     private void processInitialClientData(SocketChannel clientChannel, ConnectionState state, ByteBuffer buffer) throws IOException {
         if (buffer.remaining() == 0) {
@@ -1235,13 +1198,13 @@ public class ProxyRotateService {
             state.socksVersion = 5;
             
             if (buffer.remaining() < 1) {
-                return; // Need more data
+                return;
             }
             
             int numMethods = buffer.get() & 0xFF;
             
             if (buffer.remaining() < numMethods) {
-                return; // Need more data
+                return;
             }
             
             // Skip the auth methods - we only support no auth (0)
@@ -1325,14 +1288,13 @@ public class ProxyRotateService {
             // Connect to the target through a random proxy
             connectToTarget(clientChannel, state);
         } else {
-            // Unsupported SOCKS version
             logError("Unsupported SOCKS version: " + version);
             closeConnection(clientChannel);
         }
     }
     
     /**
-     * Process a SOCKS5 CONNECT request.
+     * Process a SOCKS5 CONNECT request
      */
     private void processSocks5ConnectRequest(SocketChannel clientChannel, ConnectionState state, ByteBuffer buffer) throws IOException {
         if (buffer.remaining() < 4) {
@@ -1401,7 +1363,7 @@ public class ProxyRotateService {
                 byte[] ipv6 = new byte[16];
                 buffer.get(ipv6);
                 
-                // Format IPv6 address properly using Java's InetAddress
+                // Format IPv6 address properly (Java's InetAddress for now)
                 try {
                     java.net.InetAddress inetAddress = java.net.InetAddress.getByAddress(ipv6);
                     targetHost = inetAddress.getHostAddress();
@@ -1440,17 +1402,15 @@ public class ProxyRotateService {
     }
 
     /**
-     * Checks if a domain should bypass proxying.
+     * Checks if a domain should bypass proxying
      */
     private boolean shouldBypassProxy(String domain) {
         if (!bypassCollaborator || domain == null) {
             return false;
         }
         
-        // Always log bypassing attempts for debugging
         logInfo("Checking if domain should bypass proxy: " + domain);
         
-        // Check if domain matches or is a subdomain of any bypass domain
         for (String bypassDomain : bypassDomains) {
             if (domain.equals(bypassDomain) || domain.endsWith("." + bypassDomain)) {
                 logInfo("Bypassing proxy for domain: " + domain);
@@ -1462,12 +1422,10 @@ public class ProxyRotateService {
     }
 
     /**
-     * Connect to the target through a selected proxy with guaranteed rotation.
+     * Connect to the target through a selected proxy with rotation
      */
     private void connectToTarget(SocketChannel clientChannel, ConnectionState state) throws IOException {
-        // Check if the target domain should bypass the proxy
         if (bypassCollaborator && shouldBypassProxy(state.targetHost)) {
-            // Connect directly to the target
             try {
                 logInfo("Setting up direct connection to " + state.targetHost + ":" + state.targetPort);
                 
@@ -1478,7 +1436,7 @@ public class ProxyRotateService {
                 // Adjust buffer sizes for direct connection
                 state.adjustBuffersForProxyType();
                 
-                // Create and configure direct socket channel
+                // Create a direct socket channel
                 SocketChannel directChannel = SocketChannel.open();
                 directChannel.configureBlocking(false);
                 Socket directSocket = directChannel.socket();
@@ -1486,9 +1444,9 @@ public class ProxyRotateService {
                 // Enhanced socket configuration for SSL/TLS
                 directSocket.setTcpNoDelay(true);
                 directSocket.setKeepAlive(true);
-                directSocket.setSoTimeout(0); // No timeout for HTTPS handshakes
+                directSocket.setSoTimeout(0);
                 
-                // Increase buffer sizes substantially for SSL/TLS data
+                // Increase buffer sizes SSL/TLS data
                 int largeBuffer = Math.max(bufferSize * 4, 262144); // At least 256KB
                 directSocket.setReceiveBufferSize(largeBuffer);
                 directSocket.setSendBufferSize(largeBuffer);
@@ -1496,20 +1454,17 @@ public class ProxyRotateService {
                 // Disable Nagle's algorithm for better SSL performance
                 directSocket.setTcpNoDelay(true);
                 
-                // Set performance preferences
-                directSocket.setPerformancePreferences(0, 1, 0); // Prioritize latency over bandwidth
+                // Prioritize latency over bandwidth ? (will check more)
+                directSocket.setPerformancePreferences(0, 1, 0); 
                 
                 // Associate the channels
                 proxyConnections.put(clientChannel, directChannel);
                 
-                // Connect directly to the target
                 logInfo("Initiating direct connection to " + state.targetHost + ":" + state.targetPort);
                 
                 boolean connected = directChannel.connect(new InetSocketAddress(state.targetHost, state.targetPort));
                 
-                // If connected immediately, we need to handle the response appropriately
                 if (connected) {
-                    // Send success response based on SOCKS version
                     if (state.socksVersion == 5) {
                         sendSocks5SuccessResponse(clientChannel);
                     } else {
@@ -1533,7 +1488,6 @@ public class ProxyRotateService {
                 return;
             } catch (IOException e) {
                 logError("Error connecting directly to " + state.targetHost + ": " + e.getMessage());
-                // Fall through to use proxy if direct connection fails
             }
         }
         
@@ -1555,29 +1509,22 @@ public class ProxyRotateService {
         String proxyKey = proxy.getHost() + ":" + proxy.getPort();
         String proxyProtocol = proxy.getProtocol();
         
-        // Always log the proxy being used for this connection
         logInfo("Using proxy: " + proxyProtocol + "://" + proxyKey + 
                 " for target: " + state.targetHost + ":" + state.targetPort);
         
-        // Increment connection counter
         connectionsPerProxy.computeIfAbsent(proxyKey, _ -> new AtomicInteger(0)).incrementAndGet();
         
-        // Save the selected proxy
         state.selectedProxy = proxy;
         
-        // Adjust buffer sizes based on proxy type
         state.adjustBuffersForProxyType();
         
         try {
-            // Create and configure the proxy socket channel
             SocketChannel proxyChannel = SocketChannel.open();
             proxyChannel.configureBlocking(false);
             Socket proxySocket = proxyChannel.socket();
             
-            // Set socket options
             proxySocket.setTcpNoDelay(true);
             
-            // For HTTP proxies, set larger socket buffers
             if (proxy.isHttp()) {
                 int largeBuffer = 262144; // 256KB
                 proxySocket.setReceiveBufferSize(largeBuffer);
@@ -1620,7 +1567,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Process a SOCKS5 authentication response from the proxy.
+     * Process a SOCKS5 authentication response from the proxy
      */
     private void processSocks5AuthResponse(SocketChannel clientChannel, SocketChannel proxyChannel, 
                                         ConnectionState state, ByteBuffer buffer, boolean isAuthResponse) throws IOException {
@@ -1694,7 +1641,6 @@ public class ProxyRotateService {
                 // Update state to wait for auth response
                 state.stage = ConnectionStage.SOCKS5_AUTH_RESPONSE;
             } else {
-                // Authentication method not supported
                 logError("SOCKS5 proxy authentication method not supported or credentials missing: " + method);
                 sendSocks5ErrorResponse(clientChannel, (byte) 1);
                 closeConnection(clientChannel);
@@ -1703,7 +1649,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Process a SOCKS5 connect response from the proxy.
+     * Process a SOCKS5 connect response from the proxy
      */
     private void processSocks5ConnectResponse(SocketChannel clientChannel, SocketChannel proxyChannel, 
                                            ConnectionState state, ByteBuffer buffer) throws IOException {
@@ -1776,7 +1722,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Process a SOCKS4 connect response from the proxy.
+     * Process a SOCKS4 connect response from the proxy
      */
     private void processSocks4ConnectResponse(SocketChannel clientChannel, SocketChannel proxyChannel, 
                                            ConnectionState state, ByteBuffer buffer) throws IOException {
@@ -1809,17 +1755,16 @@ public class ProxyRotateService {
         // Connection successful
         sendSocks4SuccessResponse(clientChannel);
         
-        // Update state to connected
         state.stage = ConnectionStage.PROXY_CONNECTED;
         
-        // If there's any remaining data, forward it to the client
+        // Forward remaining data to the client
         if (buffer.hasRemaining()) {
             clientChannel.write(buffer);
         }
     }
     
     /**
-     * Create a SOCKS4 connection request.
+     * Create a SOCKS4 connection request
      */
     private ByteBuffer createSocks4ConnectRequest(String targetHost, int targetPort) {
         ByteBuffer request;
@@ -1865,7 +1810,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Send a SOCKS5 error response to the client.
+     * Send a SOCKS5 error response to the client
      */
     private void sendSocks5ErrorResponse(SocketChannel channel, byte errorCode) {
         try {
@@ -1893,7 +1838,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Send a SOCKS5 success response to the client.
+     * Send a SOCKS5 success response to the client
      */
     private void sendSocks5SuccessResponse(SocketChannel channel) {
         try {
@@ -1921,7 +1866,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Send a SOCKS4 error response to the client.
+     * Send a SOCKS4 error response to the client
      */
     private void sendSocks4ErrorResponse(SocketChannel channel, byte errorCode) {
         try {
@@ -1947,7 +1892,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Send a SOCKS4 success response to the client.
+     * Send a SOCKS4 success response to the client
      */
     private void sendSocks4SuccessResponse(SocketChannel channel) {
         try {
@@ -1973,7 +1918,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Closes a connection and cleans up resources.
+     * Closes a connection and cleans up resources
      */
     private void closeConnection(SocketChannel clientChannel) {
         if (clientChannel == null) {
@@ -1994,7 +1939,7 @@ public class ProxyRotateService {
             if (proxyChannel != null) {
                 cancelAndCloseChannel(proxyChannel);
                 
-                // Update proxy connections counter
+                // Update counters
                 if (state != null && state.selectedProxy != null) {
                     String proxyKey = state.selectedProxy.getHost() + ":" + state.selectedProxy.getPort();
                     AtomicInteger count = connectionsPerProxy.get(proxyKey);
@@ -2004,28 +1949,25 @@ public class ProxyRotateService {
                 }
             }
             
-            // Remove from activity tracking
             lastActivityTime.remove(clientChannel);
             if (proxyChannel != null) {
                 lastActivityTime.remove(proxyChannel);
             }
             
-            // Update connection counter
             activeConnectionCount.decrementAndGet();
         } catch (Exception e) {
             logError("Error in closeConnection: " + e.toString());
             
-            // Make best effort to decrement counter even if there's an error
             try {
                 activeConnectionCount.updateAndGet(current -> Math.max(0, current - 1));
             } catch (Exception ex) {
-                // Ignore
+                // pass
             }
         }
     }
     
     /**
-     * Cancels a selection key and closes the channel.
+     * Cancel a selection key and closes the channel
      */
     private void cancelAndCloseKey(SelectionKey key) {
         if (key == null) {
@@ -2048,7 +1990,7 @@ public class ProxyRotateService {
                     try {
                         channel.close();
                     } catch (IOException e) {
-                        // Ignore
+                        // pass
                     }
                 }
             }
@@ -2058,7 +2000,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Cancels a channel's selection key and closes the channel.
+     * Cancel a channel's selection key and closes the channel
      */
     private void cancelAndCloseChannel(SocketChannel channel) {
         if (channel == null) {
@@ -2078,29 +2020,27 @@ public class ProxyRotateService {
                     Socket socket = channel.socket();
                     if (socket != null) {
                         try {
-                            socket.setSoLinger(true, 0); // Force immediate close
+                            socket.setSoLinger(true, 0);
                         } catch (Exception e) {
-                            // Ignore socket option errors
+                            // pass
                         }
                     }
                 } catch (Exception e) {
-                    // Ignore socket access errors
+                    // pass
                 }
                 
                 try {
                     channel.close();
                 } catch (IOException e) {
-                    // Ignore close errors
+                    // pass
                 }
             }
         } catch (Exception e) {
             logError("Error closing channel: " + e.toString());
         } finally {
-            // Make sure to clean up any references in our tracking collections
             try {
                 lastActivityTime.remove(channel);
                 
-                // If this is a client channel, remove from connection states
                 if (connectionStates.containsKey(channel)) {
                     connectionStates.remove(channel);
                 }
@@ -2114,7 +2054,7 @@ public class ProxyRotateService {
                             pairedChannel.close();
                         }
                     } catch (Exception e) {
-                        // Ignore
+                        // pass
                     }
                     lastActivityTime.remove(pairedChannel);
                 }
@@ -2127,13 +2067,13 @@ public class ProxyRotateService {
                     }
                 }
             } catch (Exception e) {
-                // Ignore cleanup errors
+                // pass
             }
         }
     }
     
     /**
-     * Cleans up idle connections and enforces connection rotation.
+     * Clean up idle connections and enforce connection rotation
      */
     private void cleanupIdleConnections() {
         long currentTime = System.currentTimeMillis();
@@ -2143,7 +2083,7 @@ public class ProxyRotateService {
         // More aggressive idle connection timeouts to force new proxy selections
         // We want to close connections even if they're still somewhat active
         // This helps ensure different proxies are used for different requests
-        long moderatelyIdleThreshold = 10000; // 10 seconds - close moderately idle connections
+        long moderatelyIdleThreshold = 10000; // 10 seconds - close moderately idle connections (will add UI settings)
         
         // Check client connections
         for (SocketChannel clientChannel : new ArrayList<>(lastActivityTime.keySet())) {
@@ -2177,12 +2117,11 @@ public class ProxyRotateService {
     }
     
     /**
-     * Selects a proxy from the list based on the selected mode (round-robin or random).
-     * Round-robin ensures each request uses a different proxy in sequence.
-     * Random mode picks a completely random proxy for each request.
+     * Selects a proxy from the list based on the selected mode (round-robin or random)
+     * Round-robin ensures each request uses a different proxy in sequence
+     * Random mode picks a completely random proxy for each request
      */
     private ProxyEntry selectRandomActiveProxy() {
-        // Fast path for empty proxy list
         if (proxyList.isEmpty()) {
             return null;
         }
@@ -2233,7 +2172,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Sets whether logging is enabled.
+     * Enable logging
      */
     public void setLoggingEnabled(boolean enabled) {
         if (this.loggingEnabled != enabled) {
@@ -2243,7 +2182,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Logs an info message.
+     * Log info messages
      */
     private void logInfo(String message) {
         if (loggingEnabled) {
@@ -2252,7 +2191,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Logs an error message.
+     * Log error messages
      */
     private void logError(String message) {
         if (loggingEnabled) {
@@ -2261,7 +2200,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Gets connection stats for each proxy.
+     * Get connection stats for each proxy
      */
     public String getConnectionPoolStats() {
         if (!serverRunning) {
@@ -2305,7 +2244,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Enables or disables bypassing proxies for Burp Collaborator domains
+     * Enable or disable bypassing proxies for Burp Collaborator domains
      */
     public void setBypassCollaborator(boolean bypass) {
         if (this.bypassCollaborator != bypass) {
@@ -2375,7 +2314,7 @@ public class ProxyRotateService {
             
             // Parse the IPv6 address and add it to the request
             try {
-                // Use Java's built-in InetAddress to parse the IPv6 address correctly
+                // Use Java InetAddress to parse the IPv6 address correctly (to test performance)
                 java.net.Inet6Address inet6Address = (java.net.Inet6Address) 
                     java.net.InetAddress.getByName(state.targetHost);
                 
@@ -2461,7 +2400,7 @@ public class ProxyRotateService {
         headerBuffer.put(requestBytes);
         headerBuffer.flip();
         
-        // Send the request in one operation
+        // Send the request
         proxyChannel.write(headerBuffer);
         
         logInfo("Sent HTTP CONNECT request to " + state.targetHost + ":" + state.targetPort);
@@ -2482,12 +2421,10 @@ public class ProxyRotateService {
             buffer.flip();
         }
         
-        // Process the HTTP response more efficiently at byte level
         byte[] responseBytes = new byte[buffer.remaining()];
         buffer.get(responseBytes);
         
-        // Instead of parsing the entire response as a string, we'll look for specific patterns
-        // First find the first line to check status code
+        // First find the first line to check status code (parse status line basically)
         int endOfFirstLine = -1;
         boolean isSuccessStatus = false;
         
@@ -2610,7 +2547,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Sets whether to use random proxy selection instead of round-robin
+     * Set whether to use random proxy selection instead of round-robin
      */
     public void setUseRandomProxySelection(boolean useRandom) {
         if (this.useRandomProxySelection != useRandom) {

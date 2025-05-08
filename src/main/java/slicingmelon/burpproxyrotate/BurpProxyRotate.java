@@ -50,11 +50,11 @@ public class BurpProxyRotate implements BurpExtension {
     private JButton disableButton;
     private JLabel statusLabel;
     
-    // Regular expression for proxy format validation
+    // Validate proxies
     private static final String PROXY_URL_REGEX = "^(socks[45]|http)://(?:([^:@]+):([^@]+)@)?([^:]+):(\\d+)$";
     private static final String PROXY_HOST_PORT_REGEX = "^([^:]+):(\\d+)$";
     
-    // Configuration 
+    // Used to allocate a random port available
     private int configuredLocalPort = 0;
     
     // Settings with defaults
@@ -88,7 +88,7 @@ public class BurpProxyRotate implements BurpExtension {
     private javax.swing.Timer statsUpdateTimer;
     private JLabel statsLabel;
 
-    // Add default constants for ALL settings
+    // default constants for ALL settings
     private static final int DEFAULT_BUFFER_SIZE = 8092;
     private static final int DEFAULT_IDLE_TIMEOUT = 60;
     private static final int DEFAULT_MAX_CONNECTIONS_PER_PROXY = 50;
