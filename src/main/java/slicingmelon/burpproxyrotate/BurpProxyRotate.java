@@ -140,35 +140,76 @@ public class BurpProxyRotate implements BurpExtension {
         if (savedProxies != null && !savedProxies.isEmpty()) {
             String[] proxies = savedProxies.split("\n");
             for (String proxy : proxies) {
-                String[] parts = proxy.split(":");
-                if (parts.length >= 2) {
-                    try {
-                        String protocol = "socks5";
-                        String host;
+                try {
+                    // Pattern match: protocol://[username:password@]host:port
+                    if (proxy.contains("://")) {
+                        // Parse URL-style proxy specification
+                        String protocol, username = null, password = null, host;
                         int port;
                         
-                        if (parts.length >= 3 && parts[0].startsWith("socks")) {
-                            // Format: socks5://host:port
-                            protocol = parts[0];
-                            host = parts[1].substring(2);
-                            port = Integer.parseInt(parts[2].trim());
-                        } else {
-                            // Legacy format: host:port
-                            host = parts[0].trim();
-                            port = Integer.parseInt(parts[1].trim());
+                        // Extract protocol
+                        String[] protocolSplit = proxy.split("://", 2);
+                        protocol = protocolSplit[0]; // http, socks4, or socks5
+                        String remaining = protocolSplit[1]; // [username:password@]host:port
+                        
+                        // Check for authentication
+                        if (remaining.contains("@")) {
+                            // Format: username:password@host:port
+                            String[] authSplit = remaining.split("@", 2);
+                            String[] credentials = authSplit[0].split(":", 2);
+                            username = credentials[0];
+                            password = credentials[1];
+                            remaining = authSplit[1]; // host:port
                         }
                         
+                        // Extract host and port
+                        String[] hostPort = remaining.split(":", 2);
+                        host = hostPort[0];
+                        port = Integer.parseInt(hostPort[1].trim());
+                        
                         if (!host.isEmpty() && port > 0 && port <= 65535) {
+                            ProxyEntry entry;
+                            if (username != null && password != null) {
+                                // Create authenticated proxy
+                                entry = ProxyEntry.createWithAuth(host, port, protocol, username, password);
+                            } else {
+                                // Create non-authenticated proxy
+                                entry = ProxyEntry.createWithProtocol(host, port, protocol);
+                            }
+                            
                             proxyListLock.writeLock().lock();
                             try {
-                                proxyList.add(ProxyEntry.createWithProtocol(host, port, protocol));
+                                proxyList.add(entry);
                             } finally {
                                 proxyListLock.writeLock().unlock();
                             }
+                            
+                            logMessage("Loaded proxy: " + protocol + "://" + 
+                                      (username != null ? "[authenticated]@" : "") + 
+                                      host + ":" + port);
                         }
-                    } catch (NumberFormatException e) {
-                        // Skip invalid entries
+                    } else {
+                        // Legacy format: host:port (assumes socks5)
+                        String[] parts = proxy.split(":");
+                        if (parts.length >= 2) {
+                            String host = parts[0].trim();
+                            int port = Integer.parseInt(parts[1].trim());
+                            
+                            if (!host.isEmpty() && port > 0 && port <= 65535) {
+                                proxyListLock.writeLock().lock();
+                                try {
+                                    proxyList.add(ProxyEntry.createWithProtocol(host, port, "socks5"));
+                                } finally {
+                                    proxyListLock.writeLock().unlock();
+                                }
+                                
+                                logMessage("Loaded legacy proxy: socks5://" + host + ":" + port);
+                            }
+                        }
                     }
+                } catch (Exception e) {
+                    // Skip invalid entries
+                    logMessage("Skipped invalid proxy entry: " + proxy + " (" + e.getMessage() + ")");
                 }
             }
         }
