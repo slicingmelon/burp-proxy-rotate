@@ -767,7 +767,7 @@ public class BurpProxyRotate implements BurpExtension {
             return;
         }
 
-        // First validate all proxies, then start the service
+        // First validate all proxies, then start the service (extension)
         validateAllProxies(() -> {
             // Check if we have at least one active proxy after validation
             boolean hasActiveProxy = false;
