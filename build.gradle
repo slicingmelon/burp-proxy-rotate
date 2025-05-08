@@ -2,7 +2,25 @@ plugins {
     id 'java'
 }
 
-version='1.0.0'
+def BASE_VERSION = '1.0'
+
+def getBranchVersion() {
+    def process = "git rev-parse --abbrev-ref HEAD".execute()
+    process.waitFor()
+    def branch = process.text.trim()
+    def sanitizedBranchName = branch.replace('/', '-')
+
+    if (branch == 'main') {
+        return "${BASE_VERSION}-main"
+    } else if (branch.startsWith('release/')) {
+        def releaseVersion = branch.replace('release/', '')
+        return "${releaseVersion}-beta"
+    } else {
+        return "${BASE_VERSION}-${sanitizedBranchName}-dev"
+    }
+}
+
+version = getBranchVersion()
 
 repositories {
     mavenLocal()
@@ -17,4 +35,6 @@ jar {
     from {
         configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
     }
+    
+    archiveFileName = "burp-proxy-rotate-${version}.jar"
 }
