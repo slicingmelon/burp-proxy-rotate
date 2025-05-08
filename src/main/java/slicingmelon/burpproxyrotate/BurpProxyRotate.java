@@ -92,7 +92,7 @@ public class BurpProxyRotate implements BurpExtension {
     private static final int DEFAULT_BUFFER_SIZE = 8092;
     private static final int DEFAULT_IDLE_TIMEOUT = 60;
     private static final int DEFAULT_MAX_CONNECTIONS_PER_PROXY = 50;
-    private static final boolean DEFAULT_LOGGING_ENABLED = true;
+    private static final boolean DEFAULT_LOGGING_ENABLED = false;
     private static final boolean DEFAULT_BYPASS_COLLABORATOR = true;
     private static final boolean DEFAULT_RANDOM_PROXY_SELECTION = true;
 
