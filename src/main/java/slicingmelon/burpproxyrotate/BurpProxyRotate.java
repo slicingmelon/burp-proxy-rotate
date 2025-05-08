@@ -474,6 +474,11 @@ public class BurpProxyRotate implements BurpExtension {
         disableButton.addActionListener(_ -> disableProxyRotate());
         disableButton.setEnabled(false);
         
+        // Set fixed size for both buttons to ensure they're the same size
+        Dimension buttonSize = new Dimension(180, 30);
+        enableButton.setPreferredSize(buttonSize);
+        disableButton.setPreferredSize(buttonSize);
+        
         gbc.gridx = 0;
         gbc.gridy = 1;
         gbc.gridwidth = 1;
@@ -1169,15 +1174,14 @@ public class BurpProxyRotate implements BurpExtension {
                     c.setForeground(Color.RED);
                 }
                 
-                // For authenticated proxies, show in bold
-                if (entry != null && entry.isAuthenticated() && column == 0) {
+                // Only make "Yes" in the Auth column bold
+                if (entry != null && column == 3 && "Yes".equals(value)) {
                     Font boldFont = c.getFont().deriveFont(Font.BOLD);
                     c.setFont(boldFont);
-                }
-                
-                // For HTTP proxies, show in a different color
-                if (entry != null && entry.isHttp() && column == 0) {
-                    c.setForeground(new Color(0, 128, 0)); // Dark green
+                } else {
+                    // Reset to regular font for other cells
+                    Font regularFont = c.getFont().deriveFont(Font.PLAIN);
+                    c.setFont(regularFont);
                 }
                  
                 if (column == 1) {
