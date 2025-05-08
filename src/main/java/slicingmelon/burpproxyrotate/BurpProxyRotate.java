@@ -92,7 +92,7 @@ public class BurpProxyRotate implements BurpExtension {
     private static final int DEFAULT_BUFFER_SIZE = 8092;
     private static final int DEFAULT_IDLE_TIMEOUT = 60;
     private static final int DEFAULT_MAX_CONNECTIONS_PER_PROXY = 50;
-    private static final boolean DEFAULT_LOGGING_ENABLED = true;
+    private static final boolean DEFAULT_LOGGING_ENABLED = false;
     private static final boolean DEFAULT_BYPASS_COLLABORATOR = true;
     private static final boolean DEFAULT_RANDOM_PROXY_SELECTION = true;
 
@@ -759,14 +759,51 @@ public class BurpProxyRotate implements BurpExtension {
         if (proxyList.isEmpty()) {
             JOptionPane.showMessageDialog(
                     null,
-                    "Please add at least one proxy before enabling the service.",
+                    "Please add at least one proxy before enabling the extension.",
                     "No Proxies Available",
                     JOptionPane.WARNING_MESSAGE
             );
-            logMessage("Cannot start Burp Proxy Rotate service: No proxies available");
+            logMessage("Cannot start Burp Proxy Rotate extension: No proxies available");
             return;
         }
-        
+
+        // First validate all proxies, then start the service (extension)
+        validateAllProxies(() -> {
+            // Check if we have at least one active proxy after validation
+            boolean hasActiveProxy = false;
+            proxyListLock.readLock().lock();
+            try {
+                for (ProxyEntry proxy : proxyList) {
+                    if (proxy.isActive()) {
+                        hasActiveProxy = true;
+                        break;
+                    }
+                }
+            } finally {
+                proxyListLock.readLock().unlock();
+            }
+            
+            if (!hasActiveProxy) {
+                SwingUtilities.invokeLater(() -> {
+                    JOptionPane.showMessageDialog(
+                            null,
+                            "No active proxies available. Please add valid proxies before enabling the service.",
+                            "No Active Proxies",
+                            JOptionPane.WARNING_MESSAGE
+                    );
+                    logMessage("Cannot start Burp Proxy Rotate service: No active proxies available");
+                });
+                return;
+            }
+            
+            startProxyRotateService();
+        });
+    }
+    
+    /**
+     * Starts the proxy rotate service after validation
+     */
+    private void startProxyRotateService() {
         int portToUse;
         if (configuredLocalPort <= 0) {
             portToUse = findAvailablePort();
@@ -1106,6 +1143,14 @@ public class BurpProxyRotate implements BurpExtension {
      * Validate all proxies in the list
      */
     private void validateAllProxies() {
+        validateAllProxies(null);
+    }
+
+    /**
+     * Validate all proxies in the list with an optional callback when complete
+     * @param callback Optional callback to execute after validation is complete
+     */
+    private void validateAllProxies(Runnable callback) {
         List<ProxyEntry> proxiesToValidate;
         proxyListLock.readLock().lock();
         try {
@@ -1169,12 +1214,19 @@ public class BurpProxyRotate implements BurpExtension {
             
             final int finalActiveCount = activeCount[0];
             logMessage("Validation complete. " + finalActiveCount + " of " + total + " proxies are active.");
-            SwingUtilities.invokeLater(() -> {
-                JOptionPane.showMessageDialog(null, 
-                    "Validation complete. " + finalActiveCount + " of " + total + " proxies are active.",
-                    "Validation Results", 
-                    JOptionPane.INFORMATION_MESSAGE);
-            });
+            
+            // If this was triggered from the validate button (not from enableProxyRotate)
+            if (callback == null) {
+                SwingUtilities.invokeLater(() -> {
+                    JOptionPane.showMessageDialog(null, 
+                        "Validation complete. " + finalActiveCount + " of " + total + " proxies are active.",
+                        "Validation Results", 
+                        JOptionPane.INFORMATION_MESSAGE);
+                });
+            } else {
+                // Execute the callback function
+                callback.run();
+            }
         }).start();
     }
     
