@@ -101,20 +101,15 @@ public class BurpProxyRotate implements BurpExtension {
         this.api = api;
         api.extension().setName("Burp Proxy Rotate");
         
-        // Initialize proxy list
         proxyList = new ArrayList<>();
         
-        // Load saved proxies and settings
         loadSavedProxies();
         
-        // Initialize the SOCKS Proxy Service - much simpler now
         socksProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
         socksProxyService.setExtension(this);
         
-        // Set bypass collaborator setting
         socksProxyService.setBypassCollaborator(bypassCollaborator);
         
-        // Set logging status
         socksProxyService.setLoggingEnabled(loggingEnabled);
 
         // Create and register the UI
@@ -124,14 +119,13 @@ public class BurpProxyRotate implements BurpExtension {
             updateServerButtons();
         });
         
-        // Add shutdown hook
         api.extension().registerUnloadingHandler(this::shutdown);
         
         logMessage("Burp Proxy Rotate extension loaded successfully");
     }
     
     /**
-     * Loads saved proxies and settings from Montoya persistence.
+     * Loads saved proxies and settings (from persistence)
      */
     private void loadSavedProxies() {
         String savedProxies = api.persistence().preferences().getString(PROXY_LIST_KEY);
@@ -206,7 +200,6 @@ public class BurpProxyRotate implements BurpExtension {
                         }
                     }
                 } catch (Exception e) {
-                    // Skip invalid entries
                     logMessage("Skipped invalid proxy entry: " + proxy + " (" + e.getMessage() + ")");
                 }
             }
@@ -269,7 +262,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Loads the bypass domains from persistence and update the UI
+     * Load the bypass domains from persistence and update the UI
      */
     private void loadBypassDomains() {
         String savedDomains = api.persistence().preferences().getString(BYPASS_DOMAINS_KEY);
@@ -285,7 +278,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
 
     /**
-     * Updates the bypass domains in the proxy service
+     * Update the bypass domains in the proxy service
      */
     private void updateBypassDomains(String domainsText) {
         if (socksProxyService != null) {
@@ -304,7 +297,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Saves proxies and settings to Montoya persistence.
+     * Save proxies and settings
      */
     private void saveProxies() {
         api.persistence().preferences().setString(PROXY_LIST_KEY, proxyListToString());
@@ -312,7 +305,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Converts the proxy list to a string for storage.
+     * Convert the proxy list to a string for storage
      */
     private String proxyListToString() {
         StringBuilder sb = new StringBuilder();
@@ -713,7 +706,8 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Updates Burp Suite's SOCKS proxy settings to use our local proxy service
+     * Update Burp Suite's SOCKS proxy settings to use our local proxy service
+     * just a hack :P
      */
     private void updateBurpSocksSettings(String host, int port, boolean useProxy) {
         try {
@@ -812,7 +806,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         socksProxyService.setUseRandomProxySelection(useRandomProxySelection);
         
-        // Start the service
+        // Start the internal proxy service
         socksProxyService.start(finalPortToUse, 
                 () -> {
                     SwingUtilities.invokeLater(() -> {
@@ -844,7 +838,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Disables the proxy rotation extension
+     * Disable the extension
      */
     private void disableProxyRotate() {
         if (socksProxyService == null || !socksProxyService.isRunning()) {
@@ -875,7 +869,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Updates the server control buttons based on service state
+     * Update the server control buttons based on service state
      */
     private void updateServerButtons() {
         SwingUtilities.invokeLater(() -> {
@@ -1000,7 +994,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Table for displaying proxies
+     * Proxies Table
      */
     private class ProxyTableModel extends AbstractTableModel {
         private final String[] columnNames = {"Protocol", "Host", "Port", "Auth", "Status"};
@@ -1478,7 +1472,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Notify that a proxy has been reactivated (is active again)
+     * Notify that a proxy has been reactivated (it's active again)
      */
     public void notifyProxyReactivated(String host, int port) {
         SwingUtilities.invokeLater(() -> {
