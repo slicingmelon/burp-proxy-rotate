@@ -66,9 +66,9 @@ Burp Proxy Rotate is designed for stability and speed, utilizing modern Java fea
 ## How to Use
 
 1.  **Install/Build:**
-    *   Grab a precompiled JAR from `build/libs/`.
+    *   Grab a precompiled JAR from `build/libs`. -> [burp-proxy-rotate-1.0-main.jar](https://raw.githubusercontent.com/slicingmelon/burp-proxy-rotate/refs/heads/main/build/libs/burp-proxy-rotate-1.0-main.jar)
     *   OR build the extension using (`./gradlew build`).
-    *   In Burp Suite, go to `Extensions` -> `Installed` -> `Add` and select the JAR file available under `build/libs`.
+    *   In Burp Suite, go to `Extensions` -> `Installed` -> `Add` and select the JAR file.
 2.  **Configure Proxies:**
     *   Navigate to the "Proxy Rotate" tab in Burp Suite.
     *   Use the "Single Proxy" or "Bulk Add" options to add your SOCKS4, SOCKS5, or HTTP proxies.
