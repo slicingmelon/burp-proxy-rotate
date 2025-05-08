@@ -505,7 +505,7 @@ public class BurpProxyRotate implements BurpExtension {
             public void focusGained(FocusEvent e) {
                 if (unifiedField.getText().equals("socks5://host:port")) {
                     unifiedField.setText("");
-                    unifiedField.setForeground(Color.BLACK);
+                    unifiedField.setForeground(Color.WHITE);
                 }
             }
             
