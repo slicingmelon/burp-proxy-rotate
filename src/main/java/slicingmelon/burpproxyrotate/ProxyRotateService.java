@@ -1,3 +1,10 @@
+/**
+ * Burp Proxy Rotate
+ * Author: slicingmelon <https://github.com/slicingmelon>
+ * X: @pedro_infosec
+ * 
+ * This extension routes each HTTP request through a different proxy from a provided list.
+ */
 package slicingmelon.burpproxyrotate;
 
 import burp.api.montoya.logging.Logging;
