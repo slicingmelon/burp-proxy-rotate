@@ -474,18 +474,15 @@ public class BurpProxyRotate implements BurpExtension {
         disableButton.addActionListener(_ -> disableProxyRotate());
         disableButton.setEnabled(false);
         
-        // Set fixed size for both buttons to ensure they're the same size
-        Dimension buttonSize = new Dimension(180, 30);
-        enableButton.setPreferredSize(buttonSize);
-        disableButton.setPreferredSize(buttonSize);
+        // Create a panel to hold the buttons with fixed size
+        JPanel controlButtonPanel = new JPanel(new GridLayout(1, 2, 10, 0));
+        controlButtonPanel.add(enableButton);
+        controlButtonPanel.add(disableButton);
         
         gbc.gridx = 0;
         gbc.gridy = 1;
-        gbc.gridwidth = 1;
-        controlPanel.add(enableButton, gbc);
-        
-        gbc.gridx = 1;
-        controlPanel.add(disableButton, gbc);
+        gbc.gridwidth = 2;
+        controlPanel.add(controlButtonPanel, gbc);
         
         // Proxy list/table
         proxyTableModel = new ProxyTableModel();
@@ -566,7 +563,6 @@ public class BurpProxyRotate implements BurpExtension {
             unifiedField.setForeground(Color.GRAY);
         });
         
-        // Add the panels to the singleAddPanel
         singleAddPanel.add(unifiedInputPanel, BorderLayout.CENTER);
         
         // Bulk proxy panel
@@ -574,8 +570,7 @@ public class BurpProxyRotate implements BurpExtension {
         JTextArea bulkTextArea = new JTextArea(5, 30);
         bulkTextArea.setToolTipText("Enter one proxy per line in format socks5://host:port or socks4://host:port");
         
-        // Add placeholder text to make it clearer what's expected
-        bulkTextArea.setText("# Enter one proxy per line\n# Examples:\n# socks5://192.168.1.1:1080\n# socks4://proxy.example.com:1080");
+        bulkTextArea.setText("# Enter one proxy per line\n# Examples:\n# socks5://192.168.1.1:1080\n# socks4://user:pass@host:1080");
         bulkTextArea.setForeground(Color.GRAY);
         bulkTextArea.addFocusListener(new FocusAdapter() {
             @Override
