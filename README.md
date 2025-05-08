@@ -116,8 +116,11 @@ The extension provides a user-friendly interface with two main tabs:
 
 ## Screenshots
 
-[Main Tab](./images/burp-proxy-rotate-main.png)
-[Settings Tab](./images/burp-proxy-rotate-settings.png)
+#### Main Tab
+![Main Tab](images/burp-proxy-rotate-main.png)
+
+#### Settings
+![Settings Tab](images/burp-proxy-rotate-settings.png)
 
 ## Code Organization
 
