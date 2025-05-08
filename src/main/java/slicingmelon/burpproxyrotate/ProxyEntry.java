@@ -9,7 +9,7 @@
 package slicingmelon.burpproxyrotate;
 
 /**
- * Represents a proxy entry with host, port and status information.
+ * ProxyEntry class
  */
 public class ProxyEntry {
     private final String host;
@@ -21,7 +21,7 @@ public class ProxyEntry {
     private String password; // Password for authenticated proxies
 
     /**
-     * Unified constructor for ProxyEntry
+     * ProxyEntry constructor
      * 
      * @param host The proxy host address
      * @param port The proxy port
@@ -43,32 +43,32 @@ public class ProxyEntry {
         this.password = password;
     }
 
-    // Convenience method for basic proxy entry
+    // Helper method for basic proxy entry
     public static ProxyEntry createBasic(String host, int port) {
         return new ProxyEntry(host, port, "socks5", 0, true, false, null, null);
     }
 
-    // Convenience method with protocol specification
+    // Helper method with protocol specification
     public static ProxyEntry createWithProtocol(String host, int port, String protocol) {
         return new ProxyEntry(host, port, protocol, 0, true, false, null, null);
     }
 
-    // Convenience method for authenticated proxies
+    // Helper method for authenticated proxies
     public static ProxyEntry createWithAuth(String host, int port, String protocol, String username, String password) {
         return new ProxyEntry(host, port, protocol, 0, true, false, username, password);
     }
 
-    // Convenience method for direct connections
+    // Helper method for direct connections
     public static ProxyEntry createDirect(String host, int port) {
         return new ProxyEntry(host, port, "direct", 0, true, true, null, null);
     }
 
-    // Convenience method for HTTP proxy
+    // Helper method for HTTP proxy
     public static ProxyEntry createHttp(String host, int port) {
         return new ProxyEntry(host, port, "http", 0, true, false, null, null);
     }
 
-    // Convenience method for authenticated HTTP proxy
+    // Helper method for authenticated HTTP proxy
     public static ProxyEntry createHttpWithAuth(String host, int port, String username, String password) {
         return new ProxyEntry(host, port, "http", 0, true, false, username, password);
     }
@@ -106,7 +106,7 @@ public class ProxyEntry {
     }
     
     /**
-     * Get the protocol version as an integer (4 or 5 for SOCKS)
+     * Get the protocol version (4 or 5 for SOCKS)
      */
     public int getProtocolVersion() {
         if ("socks4".equals(protocol)) {
@@ -114,9 +114,9 @@ public class ProxyEntry {
         } else if ("socks5".equals(protocol)) {
             return 5;
         } else if ("http".equals(protocol)) {
-            return 0; // HTTP doesn't have version in the same way
+            return 0;
         }
-        return 5; // Default to SOCKS5
+        return 5;
     }
     
     /**
