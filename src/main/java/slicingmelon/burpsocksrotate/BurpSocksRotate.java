@@ -48,7 +48,7 @@ public class BurpSocksRotate implements BurpExtension {
     private JLabel statusLabel;
     
     // Regular expression for proxy format validation
-    private static final String PROXY_URL_REGEX = "^(socks[45])://([^:]+):(\\d+)$";
+    private static final String PROXY_URL_REGEX = "^(socks[45])://(?:([^:@]+):([^@]+)@)?([^:]+):(\\d+)$";
     private static final String PROXY_HOST_PORT_REGEX = "^([^:]+):(\\d+)$";
     
     // Configuration 
@@ -297,8 +297,17 @@ public class BurpSocksRotate implements BurpExtension {
         proxyListLock.readLock().lock();
         try {
             for (ProxyEntry entry : proxyList) {
-                sb.append(entry.getProtocol()).append("://")
-                  .append(entry.getHost()).append(":")
+                // Add protocol and auth if present
+                sb.append(entry.getProtocol()).append("://");
+                
+                // Add authentication if present
+                if (entry.isAuthenticated()) {
+                    sb.append(entry.getUsername()).append(":")
+                      .append(entry.getPassword()).append("@");
+                }
+                
+                // Add host and port
+                sb.append(entry.getHost()).append(":")
                   .append(entry.getPort()).append("\n");
             }
         } finally {
@@ -1019,7 +1028,7 @@ public class BurpSocksRotate implements BurpExtension {
      * Table model for displaying proxies.
      */
     private class ProxyTableModel extends AbstractTableModel {
-        private final String[] columnNames = {"Protocol", "Host", "Port", "Status"};
+        private final String[] columnNames = {"Protocol", "Host", "Port", "Auth", "Status"};
         
         @Override
         public int getRowCount() {
@@ -1058,7 +1067,8 @@ public class BurpSocksRotate implements BurpExtension {
                     case 0: return entry.getProtocol();
                     case 1: return entry.getHost();
                     case 2: return entry.getPort();
-                    case 3:
+                    case 3: return entry.isAuthenticated() ? "Yes" : "No";
+                    case 4:
                         String status = entry.isActive() ? "Active" : "Inactive";
                         String error = entry.getErrorMessage();
                         return status + (error != null && !error.isEmpty() ? ": " + error : "");
@@ -1101,6 +1111,12 @@ public class BurpSocksRotate implements BurpExtension {
 
                 if (entry != null && !entry.isActive()) {
                     c.setForeground(Color.RED);
+                }
+                
+                // For authenticated proxies, show in bold
+                if (entry != null && entry.isAuthenticated() && column == 0) {
+                    Font boldFont = c.getFont().deriveFont(Font.BOLD);
+                    c.setFont(boldFont);
                 }
                  
                 if (column == 1) {
@@ -1195,7 +1211,9 @@ public class BurpSocksRotate implements BurpExtension {
      * Validates a single proxy.
      */
     private boolean validateProxy(ProxyEntry proxy, int maxAttempts) {
-        logMessage("Validating proxy: " + proxy.getProtocol() + "://" + proxy.getHost() + ":" + proxy.getPort());
+        logMessage("Validating proxy: " + proxy.getProtocol() + "://" + 
+                  (proxy.isAuthenticated() ? proxy.getUsername() + ":***@" : "") + 
+                  proxy.getHost() + ":" + proxy.getPort());
         proxy.setErrorMessage("Validating...");
         updateProxyTable();
 
@@ -1216,18 +1234,67 @@ public class BurpSocksRotate implements BurpExtension {
                 int protocolVersion = proxy.getProtocolVersion();
                 
                 if (protocolVersion == 5) {
-                    // SOCKS5 greeting (No Auth)
-                    out.write(new byte[]{0x05, 0x01, 0x00});
+                    // SOCKS5 greeting (Auth or No Auth)
+                    if (proxy.isAuthenticated()) {
+                        // Auth methods: no auth (0x00) and username/password (0x02)
+                        out.write(new byte[]{0x05, 0x02, 0x00, 0x02});
+                    } else {
+                        // No Auth only
+                        out.write(new byte[]{0x05, 0x01, 0x00});
+                    }
                     out.flush();
                     
                     byte[] response = new byte[2];
                     int bytesRead = in.read(response);
                     
-                    if (bytesRead == 2 && response[0] == 0x05 && response[1] == 0x00) {
-                        logMessage("SOCKS5 proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
-                        success = true;
-                        finalErrorMessage = "";
-                        break;
+                    if (bytesRead == 2 && response[0] == 0x05) {
+                        // Successful handshake
+                        if (response[1] == 0x00) {
+                            // No auth required
+                            logMessage("SOCKS5 proxy validated successfully (no auth): " + proxy.getHost() + ":" + proxy.getPort());
+                            success = true;
+                            finalErrorMessage = "";
+                            break;
+                        } else if (response[1] == 0x02 && proxy.isAuthenticated()) {
+                            // Username/password auth required - send credentials
+                            byte[] usernameBytes = proxy.getUsername().getBytes();
+                            byte[] passwordBytes = proxy.getPassword().getBytes();
+                            
+                            // Auth request: version 1, username len, username, password len, password
+                            byte[] authRequest = new byte[3 + usernameBytes.length + passwordBytes.length];
+                            authRequest[0] = 0x01; // Auth version
+                            authRequest[1] = (byte) usernameBytes.length;
+                            System.arraycopy(usernameBytes, 0, authRequest, 2, usernameBytes.length);
+                            authRequest[2 + usernameBytes.length] = (byte) passwordBytes.length;
+                            System.arraycopy(passwordBytes, 0, authRequest, 3 + usernameBytes.length, passwordBytes.length);
+                            
+                            out.write(authRequest);
+                            out.flush();
+                            
+                            // Read auth response
+                            byte[] authResponse = new byte[2];
+                            bytesRead = in.read(authResponse);
+                            
+                            if (bytesRead == 2 && authResponse[0] == 0x01 && authResponse[1] == 0x00) {
+                                // Auth successful
+                                logMessage("SOCKS5 proxy validated successfully (with auth): " + proxy.getHost() + ":" + proxy.getPort());
+                                success = true;
+                                finalErrorMessage = "";
+                                break;
+                            } else {
+                                finalErrorMessage = "Authentication failed";
+                                logMessage("SOCKS5 authentication failed: " + proxy.getHost() + ":" + proxy.getPort());
+                                break;
+                            }
+                        } else if (response[1] == 0x02 && !proxy.isAuthenticated()) {
+                            finalErrorMessage = "Proxy requires authentication";
+                            logMessage("SOCKS5 proxy requires authentication: " + proxy.getHost() + ":" + proxy.getPort());
+                            break;
+                        } else {
+                            finalErrorMessage = "Unsupported authentication method: " + response[1];
+                            logMessage("SOCKS5 proxy returned unsupported auth method: " + response[1]);
+                            break;
+                        }
                     } else if (bytesRead > 0 && response[0] == 'H') {
                         finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
                         logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
@@ -1307,6 +1374,7 @@ public class BurpSocksRotate implements BurpExtension {
      * Accepts formats like:
      * - socks5://host:port
      * - socks4://host:port
+     * - socks5://username:password@host:port  (for authenticated proxies)
      * - host:port (defaults to socks5)
      * 
      * @param proxyUrl the proxy URL string
@@ -1324,12 +1392,18 @@ public class BurpSocksRotate implements BurpExtension {
             
             if (matcher.matches()) {
                 String protocol = matcher.group(1);
-                String host = matcher.group(2);
-                int port = Integer.parseInt(matcher.group(3));
+                String username = matcher.group(2); // May be null if no auth
+                String password = matcher.group(3); // May be null if no auth
+                String host = matcher.group(4);
+                int port = Integer.parseInt(matcher.group(5));
                 
                 // Validate port range
                 if (port > 0 && port <= 65535) {
-                    return ProxyEntry.createWithProtocol(host, port, protocol);
+                    if (username != null && password != null) {
+                        return ProxyEntry.createWithAuth(host, port, protocol, username, password);
+                    } else {
+                        return ProxyEntry.createWithProtocol(host, port, protocol);
+                    }
                 }
             }
         } else {

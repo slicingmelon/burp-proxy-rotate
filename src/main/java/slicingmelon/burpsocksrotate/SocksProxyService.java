@@ -72,7 +72,7 @@ public class SocksProxyService {
     private enum ConnectionStage {
         INITIAL, 
         SOCKS4_CONNECT, SOCKS4_CONNECTED,
-        SOCKS5_AUTH, SOCKS5_CONNECT, SOCKS5_CONNECTED,
+        SOCKS5_AUTH, SOCKS5_AUTH_RESPONSE, SOCKS5_CONNECT, SOCKS5_CONNECTED,
         PROXY_CONNECT, PROXY_CONNECTED,
         ERROR
     }
@@ -554,12 +554,24 @@ public class SocksProxyService {
                 // Setup the SOCKS handshake with the proxy
                 if (state.selectedProxy.getProtocolVersion() == 5) {
                     // SOCKS5 proxy handshake
-                    ByteBuffer handshake = ByteBuffer.allocate(3);
-                    handshake.put((byte) 0x05); // SOCKS version
-                    handshake.put((byte) 0x01); // 1 auth method
-                    handshake.put((byte) 0x00); // No auth
-                    handshake.flip();
+                    ByteBuffer handshake;
                     
+                    if (state.selectedProxy.isAuthenticated()) {
+                        // We support both no-auth (0x00) and username/password (0x02)
+                        handshake = ByteBuffer.allocate(4);
+                        handshake.put((byte) 0x05); // SOCKS version
+                        handshake.put((byte) 0x02); // 2 auth methods
+                        handshake.put((byte) 0x00); // No auth
+                        handshake.put((byte) 0x02); // Username/password auth
+                    } else {
+                        // Only support no-auth
+                        handshake = ByteBuffer.allocate(3);
+                        handshake.put((byte) 0x05); // SOCKS version
+                        handshake.put((byte) 0x01); // 1 auth method
+                        handshake.put((byte) 0x00); // No auth
+                    }
+                    
+                    handshake.flip();
                     proxyChannel.write(handshake);
                     state.stage = ConnectionStage.SOCKS5_AUTH;
                 } else {
@@ -854,7 +866,11 @@ public class SocksProxyService {
         // Process based on the current connection stage
         switch (state.stage) {
             case SOCKS5_AUTH:
-                processSocks5AuthResponse(clientChannel, proxyChannel, state, buffer);
+                processSocks5AuthResponse(clientChannel, proxyChannel, state, buffer, false);
+                break;
+                
+            case SOCKS5_AUTH_RESPONSE:
+                processSocks5AuthResponse(clientChannel, proxyChannel, state, buffer, true);
                 break;
                 
             case SOCKS5_CONNECT:
@@ -866,56 +882,65 @@ public class SocksProxyService {
                 break;
                 
             case PROXY_CONNECTED:
-                // Check if this is a direct connection to a Collaborator domain
-                if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
-                    // For HTTPS or other SSL/TLS traffic, handle larger chunks efficiently
-                    try {
-                        int totalBytesToWrite = buffer.remaining();
-                        if (totalBytesToWrite > 0) {
-                            logInfo("Forwarding " + totalBytesToWrite + " bytes from direct connection to client");
-                            
-                            // Attempt to write all data at once
-                            int written = clientChannel.write(buffer);
-                            
-                            // If we couldn't write everything at once, keep trying
-                            if (buffer.hasRemaining()) {
-                                logInfo("Couldn't write all data at once to client, remaining: " + buffer.remaining());
-                                
-                                // Register for write interest to send remaining data
-                                SelectionKey clientKey = clientChannel.keyFor(selector);
-                                if (clientKey != null && clientKey.isValid()) {
-                                    // Create a new buffer with remaining data
-                                    ByteBuffer remainingData = ByteBuffer.allocateDirect(buffer.remaining());
-                                    remainingData.put(buffer);
-                                    remainingData.flip();
-                                    
-                                    // Store the remaining data with the connection state
-                                    state.outputBuffer = remainingData;
-                                    
-                                    // Enable write interest
-                                    clientKey.interestOps(clientKey.interestOps() | SelectionKey.OP_WRITE);
-                                }
-                            }
-                        }
-                    } catch (IOException e) {
-                        logError("Error forwarding data from direct connection: " + e.getMessage());
-                        closeConnection(clientChannel);
-                    }
-                } else {
-                    // Regular proxy forwarding without creating additional buffers
-                    try {
-                        clientChannel.write(buffer);
-                    } catch (IOException e) {
-                        logError("Error writing to client: " + e.getMessage());
-                        closeConnection(clientChannel);
-                    }
-                }
+                // Forward data to client
+                forwardDataToClient(clientChannel, state, buffer);
                 break;
                 
             default:
                 logError("Unexpected proxy data in state: " + state.stage);
                 closeConnection(clientChannel);
                 break;
+        }
+    }
+    
+    /**
+     * Forward data from a proxy/direct connection to a client
+     */
+    private void forwardDataToClient(SocketChannel clientChannel, ConnectionState state, 
+                                    ByteBuffer buffer) throws IOException {
+        // Check if this is a direct connection to a Collaborator domain
+        if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
+            // For HTTPS or other SSL/TLS traffic, handle larger chunks efficiently
+            try {
+                int totalBytesToWrite = buffer.remaining();
+                if (totalBytesToWrite > 0) {
+                    logInfo("Forwarding " + totalBytesToWrite + " bytes from direct connection to client");
+                    
+                    // Attempt to write all data at once
+                    int written = clientChannel.write(buffer);
+                    
+                    // If we couldn't write everything at once, keep trying
+                    if (buffer.hasRemaining()) {
+                        logInfo("Couldn't write all data at once to client, remaining: " + buffer.remaining());
+                        
+                        // Register for write interest to send remaining data
+                        SelectionKey clientKey = clientChannel.keyFor(selector);
+                        if (clientKey != null && clientKey.isValid()) {
+                            // Create a new buffer with remaining data
+                            ByteBuffer remainingData = ByteBuffer.allocateDirect(buffer.remaining());
+                            remainingData.put(buffer);
+                            remainingData.flip();
+                            
+                            // Store the remaining data with the connection state
+                            state.outputBuffer = remainingData;
+                            
+                            // Enable write interest
+                            clientKey.interestOps(clientKey.interestOps() | SelectionKey.OP_WRITE);
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                logError("Error forwarding data from direct connection: " + e.getMessage());
+                closeConnection(clientChannel);
+            }
+        } else {
+            // Regular proxy forwarding without creating additional buffers
+            try {
+                clientChannel.write(buffer);
+            } catch (IOException e) {
+                logError("Error writing to client: " + e.getMessage());
+                closeConnection(clientChannel);
+            }
         }
     }
     
@@ -1374,79 +1399,83 @@ public class SocksProxyService {
      * Process a SOCKS5 authentication response from the proxy.
      */
     private void processSocks5AuthResponse(SocketChannel clientChannel, SocketChannel proxyChannel, 
-                                        ConnectionState state, ByteBuffer buffer) throws IOException {
-        if (buffer.remaining() < 2) {
-            return; // Need more data
-        }
-        
-        byte version = buffer.get();
-        byte method = buffer.get();
-        
-        if (version != 5 || method != 0) {
-            logError("SOCKS5 authentication failed or not supported: " + method);
+                                        ConnectionState state, ByteBuffer buffer, boolean isAuthResponse) throws IOException {
+        if (isAuthResponse) {
+            // This is a response to username/password authentication
+            if (buffer.remaining() < 2) {
+                return; // Need more data
+            }
             
-            // Send failure to client
-            sendSocks5ErrorResponse(clientChannel, (byte) 1);
-            closeConnection(clientChannel);
-            return;
-        }
-        
-        // Authentication succeeded, send connection request to the proxy
-        ByteBuffer request;
-        
-        if (state.addressType == 1) { // IPv4
-            // Parse IPv4 address
-            String[] octets = state.targetHost.split("\\.");
-            if (octets.length != 4) {
+            byte authVersion = buffer.get();
+            byte authStatus = buffer.get();
+            
+            if (authVersion != 1) {
+                logError("Invalid SOCKS5 auth version: " + authVersion);
                 sendSocks5ErrorResponse(clientChannel, (byte) 1);
                 closeConnection(clientChannel);
                 return;
             }
             
-            request = ByteBuffer.allocate(10);
-            request.put((byte) 5); // SOCKS version
-            request.put((byte) 1); // CONNECT command
-            request.put((byte) 0); // Reserved
-            request.put((byte) 1); // IPv4 address type
-            
-            for (String octet : octets) {
-                request.put((byte) (Integer.parseInt(octet) & 0xFF));
+            if (authStatus != 0) {
+                // Authentication failed
+                logError("SOCKS5 authentication failed with status: " + authStatus);
+                sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
+                closeConnection(clientChannel);
+                return;
             }
             
-        } else if (state.addressType == 4) { // IPv6
-            // Not fully implemented in this example
-            request = ByteBuffer.allocate(22);
-            request.put((byte) 5);
-            request.put((byte) 1);
-            request.put((byte) 0);
-            request.put((byte) 4);
-            
-            // This is a simplified implementation
-            // Add proper IPv6 parsing for production
-            for (int i = 0; i < 16; i++) {
-                request.put((byte) 0);
+            // Authentication succeeded, send connection request
+            logInfo("SOCKS5 authentication successful");
+            sendSocks5ConnectRequest(proxyChannel, state);
+        } else {
+            // Normal auth method selection
+            if (buffer.remaining() < 2) {
+                return; // Need more data
             }
             
-        } else { // Domain name
-            byte[] domain = state.targetHost.getBytes();
-            request = ByteBuffer.allocate(7 + domain.length);
-            request.put((byte) 5);
-            request.put((byte) 1);
-            request.put((byte) 0);
-            request.put((byte) 3);
-            request.put((byte) domain.length);
-            request.put(domain);
+            byte version = buffer.get();
+            byte method = buffer.get();
+            
+            if (version != 5) {
+                logError("Invalid SOCKS5 version in auth response: " + version);
+                sendSocks5ErrorResponse(clientChannel, (byte) 1);
+                closeConnection(clientChannel);
+                return;
+            }
+            
+            // Handle authentication based on the selected method
+            if (method == 0) {
+                // No authentication required
+                logInfo("SOCKS5 proxy accepted no-auth method");
+                sendSocks5ConnectRequest(proxyChannel, state);
+            } else if (method == 2 && state.selectedProxy.isAuthenticated()) {
+                // Username/password authentication required
+                logInfo("SOCKS5 proxy requested username/password authentication");
+                
+                // Send username/password authentication
+                byte[] usernameBytes = state.selectedProxy.getUsername().getBytes();
+                byte[] passwordBytes = state.selectedProxy.getPassword().getBytes();
+                
+                // Auth request: version 1, username len, username, password len, password
+                ByteBuffer authRequest = ByteBuffer.allocate(3 + usernameBytes.length + passwordBytes.length);
+                authRequest.put((byte) 1); // Auth subversion
+                authRequest.put((byte) usernameBytes.length);
+                authRequest.put(usernameBytes);
+                authRequest.put((byte) passwordBytes.length);
+                authRequest.put(passwordBytes);
+                authRequest.flip();
+                
+                proxyChannel.write(authRequest);
+                
+                // Update state to wait for auth response
+                state.stage = ConnectionStage.SOCKS5_AUTH_RESPONSE;
+            } else {
+                // Authentication method not supported
+                logError("SOCKS5 proxy authentication method not supported or credentials missing: " + method);
+                sendSocks5ErrorResponse(clientChannel, (byte) 1);
+                closeConnection(clientChannel);
+            }
         }
-        
-        // Set port (big endian)
-        request.put((byte) ((state.targetPort >> 8) & 0xFF));
-        request.put((byte) (state.targetPort & 0xFF));
-        
-        request.flip();
-        proxyChannel.write(request);
-        
-        // Update state
-        state.stage = ConnectionStage.SOCKS5_CONNECT;
     }
     
     /**
@@ -1980,5 +2009,65 @@ public class SocksProxyService {
     public void clearBypassDomains() {
         bypassDomains.clear();
         logInfo("All bypass domains have been cleared");
+    }
+
+    /**
+     * Send a SOCKS5 connect request to the proxy
+     */
+    private void sendSocks5ConnectRequest(SocketChannel proxyChannel, ConnectionState state) throws IOException {
+        ByteBuffer request;
+        
+        if (state.addressType == 1) { // IPv4
+            // Parse IPv4 address
+            String[] octets = state.targetHost.split("\\.");
+            if (octets.length != 4) {
+                // Invalid IPv4 address
+                return;
+            }
+            
+            request = ByteBuffer.allocate(10);
+            request.put((byte) 5); // SOCKS version
+            request.put((byte) 1); // CONNECT command
+            request.put((byte) 0); // Reserved
+            request.put((byte) 1); // IPv4 address type
+            
+            for (String octet : octets) {
+                request.put((byte) (Integer.parseInt(octet) & 0xFF));
+            }
+            
+        } else if (state.addressType == 4) { // IPv6
+            // Not fully implemented in this example
+            request = ByteBuffer.allocate(22);
+            request.put((byte) 5);
+            request.put((byte) 1);
+            request.put((byte) 0);
+            request.put((byte) 4);
+            
+            // This is a simplified implementation
+            // Add proper IPv6 parsing for production
+            for (int i = 0; i < 16; i++) {
+                request.put((byte) 0);
+            }
+            
+        } else { // Domain name
+            byte[] domain = state.targetHost.getBytes();
+            request = ByteBuffer.allocate(7 + domain.length);
+            request.put((byte) 5);
+            request.put((byte) 1);
+            request.put((byte) 0);
+            request.put((byte) 3);
+            request.put((byte) domain.length);
+            request.put(domain);
+        }
+        
+        // Set port (big endian)
+        request.put((byte) ((state.targetPort >> 8) & 0xFF));
+        request.put((byte) (state.targetPort & 0xFF));
+        
+        request.flip();
+        proxyChannel.write(request);
+        
+        // Update state
+        state.stage = ConnectionStage.SOCKS5_CONNECT;
     }
 } 
