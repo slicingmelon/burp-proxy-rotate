@@ -51,6 +51,18 @@ Burp Proxy Rotate is designed for stability and speed, utilizing modern Java fea
     -   **Direct Connection Fallback:** If a direct connection to a bypass domain fails, it can attempt to route through a standard proxy.
     -   **JDK Epoll Bug Workaround:** Includes logic to recreate the selector in case of a known JDK bug related to `epoll_wait` returning 0 indefinitely.
 
+## Screenshots
+
+#### Main Tab
+![Main Tab](images/burp-proxy-rotate-main.png)
+
+#### Settings
+![Settings Tab](images/burp-proxy-rotate-settings.png)
+
+## Demo
+
+![Demo](images/burp-proxy-rorate-demo.gif)
+
 ## How to Use
 
 1.  **Install/Build:**
@@ -113,18 +125,4 @@ The extension provides a user-friendly interface with two main tabs:
 ### Log Panel (Bottom of Main Tab)
 
 -   Displays real-time operational logs from the extension, including connection attempts, proxy selections, errors, and status changes.
-
-
-## Screenshots
-
-#### Main Tab
-![Main Tab](images/burp-proxy-rotate-main.png)
-
-#### Settings
-![Settings Tab](images/burp-proxy-rotate-settings.png)
-
-## Demo
-
-![Demo](images/burp-proxy-rorate-demo.gif)
-
 
