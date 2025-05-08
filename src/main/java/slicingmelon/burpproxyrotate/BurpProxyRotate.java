@@ -568,7 +568,7 @@ public class BurpProxyRotate implements BurpExtension {
             public void focusGained(FocusEvent e) {
                 if (bulkTextArea.getText().startsWith("# Enter")) {
                     bulkTextArea.setText("");
-                    bulkTextArea.setForeground(Color.BLACK);
+                    bulkTextArea.setForeground(Color.WHITE);
                 }
             }
             
