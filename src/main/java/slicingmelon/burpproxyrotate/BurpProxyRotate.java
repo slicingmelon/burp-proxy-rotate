@@ -98,7 +98,7 @@ public class BurpProxyRotate implements BurpExtension {
     @Override
     public void initialize(MontoyaApi api) {
         this.api = api;
-        api.extension().setName("Proxy Rotate");
+        api.extension().setName("Burp Proxy Rotate");
         
         // Initialize proxy list
         proxyList = new ArrayList<>();
