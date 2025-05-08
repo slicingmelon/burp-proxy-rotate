@@ -759,11 +759,11 @@ public class BurpProxyRotate implements BurpExtension {
         if (proxyList.isEmpty()) {
             JOptionPane.showMessageDialog(
                     null,
-                    "Please add at least one proxy before enabling the service.",
+                    "Please add at least one proxy before enabling the extension.",
                     "No Proxies Available",
                     JOptionPane.WARNING_MESSAGE
             );
-            logMessage("Cannot start Burp Proxy Rotate service: No proxies available");
+            logMessage("Cannot start Burp Proxy Rotate extension: No proxies available");
             return;
         }
 
