@@ -1,14 +1,14 @@
 package slicingmelon.burpproxyrotate;
 
 /**
- * Represents a SOCKS proxy entry with host, port and status information.
+ * Represents a proxy entry with host, port and status information.
  */
 public class ProxyEntry {
     private final String host;
     private final int port;
     private boolean active;
     private String errorMessage;
-    private String protocol; // Either "socks4" or "socks5"
+    private String protocol; // Either "socks4", "socks5", "http", or "direct"
     private String username; // Username for authenticated proxies
     private String password; // Password for authenticated proxies
 
@@ -17,7 +17,7 @@ public class ProxyEntry {
      * 
      * @param host The proxy host address
      * @param port The proxy port
-     * @param protocol Protocol to use (socks4, socks5, or direct). Defaults to socks5
+     * @param protocol Protocol to use (socks4, socks5, http, or direct). Defaults to socks5
      * @param protocolVersion Protocol version (used with direct connections)
      * @param active Whether this proxy is active. Defaults to true
      * @param isDirectConnection Whether this is a direct connection. Defaults to false
@@ -55,6 +55,16 @@ public class ProxyEntry {
         return new ProxyEntry(host, port, "direct", 0, true, true, null, null);
     }
 
+    // Convenience method for HTTP proxy
+    public static ProxyEntry createHttp(String host, int port) {
+        return new ProxyEntry(host, port, "http", 0, true, false, null, null);
+    }
+
+    // Convenience method for authenticated HTTP proxy
+    public static ProxyEntry createHttpWithAuth(String host, int port, String username, String password) {
+        return new ProxyEntry(host, port, "http", 0, true, false, username, password);
+    }
+
     public String getHost() {
         return host;
     }
@@ -88,10 +98,17 @@ public class ProxyEntry {
     }
     
     /**
-     * Get the protocol version as an integer (4 or 5)
+     * Get the protocol version as an integer (4 or 5 for SOCKS)
      */
     public int getProtocolVersion() {
-        return "socks4".equals(protocol) ? 4 : 5;
+        if ("socks4".equals(protocol)) {
+            return 4;
+        } else if ("socks5".equals(protocol)) {
+            return 5;
+        } else if ("http".equals(protocol)) {
+            return 0; // HTTP doesn't have version in the same way
+        }
+        return 5; // Default to SOCKS5
     }
     
     /**
@@ -99,6 +116,13 @@ public class ProxyEntry {
      */
     public boolean isAuthenticated() {
         return username != null && !username.isEmpty() && password != null;
+    }
+
+    /**
+     * Check if this is an HTTP proxy
+     */
+    public boolean isHttp() {
+        return "http".equals(protocol);
     }
     
     /**

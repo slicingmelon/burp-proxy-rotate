@@ -73,6 +73,7 @@ public class ProxyRotateService {
         INITIAL, 
         SOCKS4_CONNECT, SOCKS4_CONNECTED,
         SOCKS5_AUTH, SOCKS5_AUTH_RESPONSE, SOCKS5_CONNECT, SOCKS5_CONNECTED,
+        HTTP_CONNECT, // New stage for HTTP CONNECT
         PROXY_CONNECT, PROXY_CONNECTED,
         ERROR
     }
@@ -547,7 +548,21 @@ public class ProxyRotateService {
                     return;
                 }
                 
-                // Regular proxy connection logic continues here
+                // Check if this is an HTTP proxy connection
+                if (state.selectedProxy != null && state.selectedProxy.isHttp()) {
+                    // Send HTTP CONNECT request
+                    logInfo("HTTP proxy connection established to " + state.selectedProxy.getHost() + ":" + state.selectedProxy.getPort());
+                    sendHttpConnectRequest(proxyChannel, state);
+                    
+                    // Register for reading the HTTP response
+                    proxyChannel.register(selector, SelectionKey.OP_READ);
+                    
+                    // Update state
+                    state.stage = ConnectionStage.HTTP_CONNECT;
+                    return;
+                }
+                
+                // Regular proxy connection logic continues here for SOCKS proxies
                 // Register for reading from the proxy
                 proxyChannel.register(selector, SelectionKey.OP_READ);
                 
@@ -879,6 +894,10 @@ public class ProxyRotateService {
                 
             case SOCKS4_CONNECT:
                 processSocks4ConnectResponse(clientChannel, proxyChannel, state, buffer);
+                break;
+                
+            case HTTP_CONNECT:
+                processHttpConnectResponse(clientChannel, proxyChannel, state, buffer);
                 break;
                 
             case PROXY_CONNECTED:
@@ -1340,9 +1359,10 @@ public class ProxyRotateService {
         }
         
         String proxyKey = proxy.getHost() + ":" + proxy.getPort();
+        String proxyProtocol = proxy.getProtocol();
         
         // Always log the proxy being used for this connection
-        logInfo("Using proxy: " + proxy.getProtocol() + "://" + proxyKey + 
+        logInfo("Using proxy: " + proxyProtocol + "://" + proxyKey + 
                 " for target: " + state.targetHost + ":" + state.targetPort);
         
         // Increment connection counter
@@ -2069,5 +2089,109 @@ public class ProxyRotateService {
         
         // Update state
         state.stage = ConnectionStage.SOCKS5_CONNECT;
+    }
+
+    /**
+     * Send an HTTP CONNECT request to the proxy
+     */
+    private void sendHttpConnectRequest(SocketChannel proxyChannel, ConnectionState state) throws IOException {
+        // Create the HTTP CONNECT request
+        StringBuilder request = new StringBuilder();
+        request.append("CONNECT ")
+               .append(state.targetHost)
+               .append(":")
+               .append(state.targetPort)
+               .append(" HTTP/1.1\r\n");
+        
+        request.append("Host: ")
+               .append(state.targetHost)
+               .append(":")
+               .append(state.targetPort)
+               .append("\r\n");
+        
+        // Add authentication if needed
+        if (state.selectedProxy != null && state.selectedProxy.isAuthenticated()) {
+            String auth = state.selectedProxy.getUsername() + ":" + state.selectedProxy.getPassword();
+            String encodedAuth = java.util.Base64.getEncoder().encodeToString(auth.getBytes());
+            request.append("Proxy-Authorization: Basic ")
+                   .append(encodedAuth)
+                   .append("\r\n");
+            
+            logInfo("Added Basic authentication for HTTP proxy");
+        }
+        
+        // Add some standard headers
+        request.append("Connection: keep-alive\r\n");
+        request.append("User-Agent: BurpProxyRotate\r\n");
+        request.append("\r\n"); // End request with blank line
+        
+        // Send the request
+        ByteBuffer requestBuffer = ByteBuffer.wrap(request.toString().getBytes());
+        proxyChannel.write(requestBuffer);
+        
+        logInfo("Sent HTTP CONNECT request to " + state.targetHost + ":" + state.targetPort);
+    }
+    
+    /**
+     * Process an HTTP CONNECT response from the proxy
+     */
+    private void processHttpConnectResponse(SocketChannel clientChannel, SocketChannel proxyChannel, 
+                                          ConnectionState state, ByteBuffer buffer) throws IOException {
+        // Convert the buffer to a string for HTTP response parsing
+        byte[] responseBytes = new byte[buffer.remaining()];
+        buffer.get(responseBytes);
+        String response = new String(responseBytes);
+        
+        logInfo("Received HTTP response: " + response.split("\r\n")[0]); // Log the status line
+        
+        // Parse the HTTP response
+        if (response.contains("HTTP/1.1 200") || response.contains("HTTP/1.0 200") || 
+            response.contains("HTTP/1.1 200 Connection established") || 
+            response.contains("HTTP/1.0 200 Connection established")) {
+            
+            // Successful connection
+            logInfo("HTTP CONNECT successful");
+            
+            // Send success response to the client based on SOCKS version
+            if (state.socksVersion == 5) {
+                sendSocks5SuccessResponse(clientChannel);
+            } else {
+                sendSocks4SuccessResponse(clientChannel);
+            }
+            
+            // Update state to connected
+            state.stage = ConnectionStage.PROXY_CONNECTED;
+            
+            // If there's more data after the HTTP headers, that's the beginning of the tunneled connection
+            int bodyStart = response.indexOf("\r\n\r\n");
+            if (bodyStart != -1 && bodyStart + 4 < response.length()) {
+                // There's data after the headers, forward it to the client
+                String tunnelData = response.substring(bodyStart + 4);
+                ByteBuffer tunnelBuffer = ByteBuffer.wrap(tunnelData.getBytes());
+                clientChannel.write(tunnelBuffer);
+            }
+        } else if (response.contains("407")) {
+            // Proxy authentication required
+            logError("HTTP proxy requires authentication or credentials are invalid");
+            
+            if (state.socksVersion == 5) {
+                sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
+            } else {
+                sendSocks4ErrorResponse(clientChannel, (byte) 91); // Rejected
+            }
+            
+            closeConnection(clientChannel);
+        } else {
+            // Other error
+            logError("HTTP CONNECT failed: " + response.split("\r\n")[0]);
+            
+            if (state.socksVersion == 5) {
+                sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
+            } else {
+                sendSocks4ErrorResponse(clientChannel, (byte) 91); // Rejected
+            }
+            
+            closeConnection(clientChannel);
+        }
     }
 } 

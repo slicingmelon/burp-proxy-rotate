@@ -1,7 +1,7 @@
 /**
- * Burp SOCKS Proxy Rotate
+ * Burp Proxy Rotate
  * 
- * This extension routes each HTTP request through a different SOCKS proxy from a provided list.
+ * This extension routes each HTTP request through a different proxy from a provided list.
  */
 package slicingmelon.burpproxyrotate;
 
@@ -48,7 +48,7 @@ public class BurpProxyRotate implements BurpExtension {
     private JLabel statusLabel;
     
     // Regular expression for proxy format validation
-    private static final String PROXY_URL_REGEX = "^(socks[45])://(?:([^:@]+):([^@]+)@)?([^:]+):(\\d+)$";
+    private static final String PROXY_URL_REGEX = "^(socks[45]|http)://(?:([^:@]+):([^@]+)@)?([^:]+):(\\d+)$";
     private static final String PROXY_HOST_PORT_REGEX = "^([^:]+):(\\d+)$";
     
     // Configuration 
@@ -773,7 +773,7 @@ public class BurpProxyRotate implements BurpExtension {
      */
     private void enableProxyRotate() {
         // Don't start if service is already running
-        if (proxyRotateService != null && proxyRotateService.isRunning()) {
+        if (socksProxyService != null && socksProxyService.isRunning()) {
             logMessage("Burp Proxy Rotate service is already running");
             return;
         }
@@ -864,10 +864,10 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Disables the SOCKS rotation service.
+     * Disables the proxy rotation service.
      */
     private void disableProxyRotate() {
-        if (proxyRotateService == null || !proxyRotateService.isRunning()) {
+        if (socksProxyService == null || !socksProxyService.isRunning()) {
             logMessage("Burp Proxy Rotate service is not running");
             return;
         }
@@ -876,10 +876,10 @@ public class BurpProxyRotate implements BurpExtension {
             logMessage("Stopping Burp Proxy Rotate service...");
             
             // Stop the service
-            proxyRotateService.stop();
+            socksProxyService.stop();
             
             // Update Burp settings
-            updateBurpProxySettings("", 0, false);
+            updateBurpSocksSettings("", 0, false);
             
             // Update UI
             statusLabel.setText("Status: Stopped");
@@ -917,7 +917,7 @@ public class BurpProxyRotate implements BurpExtension {
         logMessage("Extension unloading. Stopping proxy service...");
          
         if (socksProxyService != null) {
-            disableSocksRotate();
+            disableProxyRotate();
         }
         saveProxies();
         logMessage("Burp SOCKS Rotate extension shut down.");
@@ -1118,6 +1118,11 @@ public class BurpProxyRotate implements BurpExtension {
                     Font boldFont = c.getFont().deriveFont(Font.BOLD);
                     c.setFont(boldFont);
                 }
+                
+                // For HTTP proxies, show in a different color
+                if (entry != null && entry.isHttp() && column == 0) {
+                    c.setForeground(new Color(0, 128, 0)); // Dark green
+                }
                  
                 if (column == 1) {
                     ((JLabel) c).setHorizontalAlignment(SwingConstants.CENTER);
@@ -1230,113 +1235,165 @@ public class BurpProxyRotate implements BurpExtension {
                 OutputStream out = socket.getOutputStream();
                 InputStream in = socket.getInputStream();
                 
-                // Send greeting based on protocol
-                int protocolVersion = proxy.getProtocolVersion();
-                
-                if (protocolVersion == 5) {
-                    // SOCKS5 greeting (Auth or No Auth)
+                if (proxy.isHttp()) {
+                    // HTTP proxy validation - send a simple CONNECT request to a test server
+                    String testHost = "www.google.com";
+                    int testPort = 443;
+                    
+                    StringBuilder request = new StringBuilder();
+                    request.append("CONNECT ").append(testHost).append(":").append(testPort).append(" HTTP/1.1\r\n");
+                    request.append("Host: ").append(testHost).append(":").append(testPort).append("\r\n");
+                    
+                    // Add authentication if needed
                     if (proxy.isAuthenticated()) {
-                        // Auth methods: no auth (0x00) and username/password (0x02)
-                        out.write(new byte[]{0x05, 0x02, 0x00, 0x02});
-                    } else {
-                        // No Auth only
-                        out.write(new byte[]{0x05, 0x01, 0x00});
+                        String auth = proxy.getUsername() + ":" + proxy.getPassword();
+                        String encodedAuth = java.util.Base64.getEncoder().encodeToString(auth.getBytes());
+                        request.append("Proxy-Authorization: Basic ").append(encodedAuth).append("\r\n");
                     }
+                    
+                    request.append("Connection: keep-alive\r\n\r\n");
+                    
+                    // Send the request
+                    out.write(request.toString().getBytes());
                     out.flush();
                     
-                    byte[] response = new byte[2];
-                    int bytesRead = in.read(response);
-                    
-                    if (bytesRead == 2 && response[0] == 0x05) {
-                        // Successful handshake
-                        if (response[1] == 0x00) {
-                            // No auth required
-                            logMessage("SOCKS5 proxy validated successfully (no auth): " + proxy.getHost() + ":" + proxy.getPort());
+                    // Read the response
+                    byte[] buffer = new byte[1024];
+                    int bytesRead = in.read(buffer);
+                    if (bytesRead > 0) {
+                        String response = new String(buffer, 0, bytesRead);
+                        if (response.contains("200") || response.contains("HTTP/1.1 200")) {
+                            // Success - 200 response
+                            logMessage("HTTP proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
                             success = true;
                             finalErrorMessage = "";
                             break;
-                        } else if (response[1] == 0x02 && proxy.isAuthenticated()) {
-                            // Username/password auth required - send credentials
-                            byte[] usernameBytes = proxy.getUsername().getBytes();
-                            byte[] passwordBytes = proxy.getPassword().getBytes();
-                            
-                            // Auth request: version 1, username len, username, password len, password
-                            byte[] authRequest = new byte[3 + usernameBytes.length + passwordBytes.length];
-                            authRequest[0] = 0x01; // Auth version
-                            authRequest[1] = (byte) usernameBytes.length;
-                            System.arraycopy(usernameBytes, 0, authRequest, 2, usernameBytes.length);
-                            authRequest[2 + usernameBytes.length] = (byte) passwordBytes.length;
-                            System.arraycopy(passwordBytes, 0, authRequest, 3 + usernameBytes.length, passwordBytes.length);
-                            
-                            out.write(authRequest);
-                            out.flush();
-                            
-                            // Read auth response
-                            byte[] authResponse = new byte[2];
-                            bytesRead = in.read(authResponse);
-                            
-                            if (bytesRead == 2 && authResponse[0] == 0x01 && authResponse[1] == 0x00) {
-                                // Auth successful
-                                logMessage("SOCKS5 proxy validated successfully (with auth): " + proxy.getHost() + ":" + proxy.getPort());
+                        } else if (response.contains("407")) {
+                            // Authentication required but not provided, or invalid
+                            finalErrorMessage = "Authentication required or invalid";
+                            logMessage("HTTP proxy requires authentication: " + proxy.getHost() + ":" + proxy.getPort());
+                            if (!proxy.isAuthenticated()) {
+                                break;
+                            }
+                        } else {
+                            // Other error
+                            finalErrorMessage = "HTTP proxy error: " + response.split("\r\n")[0];
+                            logMessage("HTTP proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
+                                     " - " + finalErrorMessage);
+                            break;
+                        }
+                    }
+                } 
+                // Check SOCKS proxy
+                else {
+                    // Send greeting based on protocol
+                    int protocolVersion = proxy.getProtocolVersion();
+                    
+                    if (protocolVersion == 5) {
+                        // SOCKS5 greeting (Auth or No Auth)
+                        if (proxy.isAuthenticated()) {
+                            // Auth methods: no auth (0x00) and username/password (0x02)
+                            out.write(new byte[]{0x05, 0x02, 0x00, 0x02});
+                        } else {
+                            // No Auth only
+                            out.write(new byte[]{0x05, 0x01, 0x00});
+                        }
+                        out.flush();
+                        
+                        byte[] response = new byte[2];
+                        int bytesRead = in.read(response);
+                        
+                        if (bytesRead == 2 && response[0] == 0x05) {
+                            // Successful handshake
+                            if (response[1] == 0x00) {
+                                // No auth required
+                                logMessage("SOCKS5 proxy validated successfully (no auth): " + proxy.getHost() + ":" + proxy.getPort());
                                 success = true;
                                 finalErrorMessage = "";
                                 break;
+                            } else if (response[1] == 0x02 && proxy.isAuthenticated()) {
+                                // Username/password auth required - send credentials
+                                byte[] usernameBytes = proxy.getUsername().getBytes();
+                                byte[] passwordBytes = proxy.getPassword().getBytes();
+                                
+                                // Auth request: version 1, username len, username, password len, password
+                                byte[] authRequest = new byte[3 + usernameBytes.length + passwordBytes.length];
+                                authRequest[0] = 0x01; // Auth version
+                                authRequest[1] = (byte) usernameBytes.length;
+                                System.arraycopy(usernameBytes, 0, authRequest, 2, usernameBytes.length);
+                                authRequest[2 + usernameBytes.length] = (byte) passwordBytes.length;
+                                System.arraycopy(passwordBytes, 0, authRequest, 3 + usernameBytes.length, passwordBytes.length);
+                                
+                                out.write(authRequest);
+                                out.flush();
+                                
+                                // Read auth response
+                                byte[] authResponse = new byte[2];
+                                bytesRead = in.read(authResponse);
+                                
+                                if (bytesRead == 2 && authResponse[0] == 0x01 && authResponse[1] == 0x00) {
+                                    // Auth successful
+                                    logMessage("SOCKS5 proxy validated successfully (with auth): " + proxy.getHost() + ":" + proxy.getPort());
+                                    success = true;
+                                    finalErrorMessage = "";
+                                    break;
+                                } else {
+                                    finalErrorMessage = "Authentication failed";
+                                    logMessage("SOCKS5 authentication failed: " + proxy.getHost() + ":" + proxy.getPort());
+                                    break;
+                                }
+                            } else if (response[1] == 0x02 && !proxy.isAuthenticated()) {
+                                finalErrorMessage = "Proxy requires authentication";
+                                logMessage("SOCKS5 proxy requires authentication: " + proxy.getHost() + ":" + proxy.getPort());
+                                break;
                             } else {
-                                finalErrorMessage = "Authentication failed";
-                                logMessage("SOCKS5 authentication failed: " + proxy.getHost() + ":" + proxy.getPort());
+                                finalErrorMessage = "Unsupported authentication method: " + response[1];
+                                logMessage("SOCKS5 proxy returned unsupported auth method: " + response[1]);
                                 break;
                             }
-                        } else if (response[1] == 0x02 && !proxy.isAuthenticated()) {
-                            finalErrorMessage = "Proxy requires authentication";
-                            logMessage("SOCKS5 proxy requires authentication: " + proxy.getHost() + ":" + proxy.getPort());
+                        } else if (bytesRead > 0 && response[0] == 'H') {
+                            finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
+                            logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
+                                     " - " + finalErrorMessage);
                             break;
                         } else {
-                            finalErrorMessage = "Unsupported authentication method: " + response[1];
-                            logMessage("SOCKS5 proxy returned unsupported auth method: " + response[1]);
-                            break;
+                            finalErrorMessage = "Invalid SOCKS5 response";
+                            logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
                         }
-                    } else if (bytesRead > 0 && response[0] == 'H') {
-                        finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
-                        logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
-                                 " - " + finalErrorMessage);
-                        break;
-                    } else {
-                        finalErrorMessage = "Invalid SOCKS5 response";
-                        logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
-                    }
-                } else if (protocolVersion == 4) {
-                    // SOCKS4 doesn't have a simple handshake we can use to just test the connection
-                    // We have to send a connect request to a real host
-                    
-                    // Send a request to connect to a test host (e.g., google.com:80)
-                    // This is just a test connect, we're not actually going to use the connection
-                    out.write(new byte[] {
-                        0x04, // SOCKS version
-                        0x01, // CONNECT command
-                        0x00, 0x50, // Port 80 (web)
-                        0x08, 0x08, 0x08, 0x08, // IP 8.8.8.8 (Google DNS)
-                        0x00  // User ID (empty)
-                    });
-                    out.flush();
-                    
-                    byte[] response = new byte[8];
-                    int bytesRead = in.read(response);
-                    
-                    // We just want to verify we get a SOCKS4 response, not that it succeeds
-                    if (bytesRead == 8 && response[0] == 0x00) {
-                        // This is a SOCKS4 proxy - even if it returns an error code, we know it speaks SOCKS4
-                        logMessage("SOCKS4 proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
-                        success = true;
-                        finalErrorMessage = "";
-                        break;
-                    } else if (bytesRead > 0 && response[0] == 'H') {
-                        finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
-                        logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
-                                 " - " + finalErrorMessage);
-                        break;
-                    } else {
-                        finalErrorMessage = "Invalid SOCKS4 response";
-                        logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+                    } else if (protocolVersion == 4) {
+                        // SOCKS4 doesn't have a simple handshake we can use to just test the connection
+                        // We have to send a connect request to a real host
+                        
+                        // Send a request to connect to a test host (e.g., google.com:80)
+                        // This is just a test connect, we're not actually going to use the connection
+                        out.write(new byte[] {
+                            0x04, // SOCKS version
+                            0x01, // CONNECT command
+                            0x00, 0x50, // Port 80 (web)
+                            0x08, 0x08, 0x08, 0x08, // IP 8.8.8.8 (Google DNS)
+                            0x00  // User ID (empty)
+                        });
+                        out.flush();
+                        
+                        byte[] response = new byte[8];
+                        int bytesRead = in.read(response);
+                        
+                        // We just want to verify we get a SOCKS4 response, not that it succeeds
+                        if (bytesRead == 8 && response[0] == 0x00) {
+                            // This is a SOCKS4 proxy - even if it returns an error code, we know it speaks SOCKS4
+                            logMessage("SOCKS4 proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
+                            success = true;
+                            finalErrorMessage = "";
+                            break;
+                        } else if (bytesRead > 0 && response[0] == 'H') {
+                            finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
+                            logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
+                                     " - " + finalErrorMessage);
+                            break;
+                        } else {
+                            finalErrorMessage = "Invalid SOCKS4 response";
+                            logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+                        }
                     }
                 }
             } catch (IOException e) {
@@ -1374,7 +1431,9 @@ public class BurpProxyRotate implements BurpExtension {
      * Accepts formats like:
      * - socks5://host:port
      * - socks4://host:port
+     * - http://host:port
      * - socks5://username:password@host:port  (for authenticated proxies)
+     * - http://username:password@host:port (for authenticated http proxies)
      * - host:port (defaults to socks5)
      * 
      * @param proxyUrl the proxy URL string
@@ -1386,7 +1445,7 @@ public class BurpProxyRotate implements BurpExtension {
         }
         
         // Check if the URL has protocol specification
-        if (proxyUrl.startsWith("socks")) {
+        if (proxyUrl.startsWith("socks") || proxyUrl.startsWith("http")) {
             java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(PROXY_URL_REGEX);
             java.util.regex.Matcher matcher = pattern.matcher(proxyUrl);
             
