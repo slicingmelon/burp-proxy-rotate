@@ -4,7 +4,7 @@
  * https://github.com/slicingmelon
  * https://x.com/pedro_infosec
  * 
- * This extension routes each HTTP request through a different proxy from a provided list.
+ * This burp extension routes each HTTP request through a different proxy from a provided list.
  */
 package slicingmelon.burpproxyrotate;
 
