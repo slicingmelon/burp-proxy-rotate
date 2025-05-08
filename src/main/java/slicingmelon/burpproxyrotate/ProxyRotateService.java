@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.function.Consumer;
+import java.nio.BufferOverflowException;
 
 /**
  * The core service that randomly rotates each HTTP request through a different proxy from a provided list.
@@ -103,6 +104,46 @@ public class ProxyRotateService {
             this.inputBuffer = ByteBuffer.allocateDirect(bufferSize);
             this.outputBuffer = ByteBuffer.allocateDirect(bufferSize);
             this.creationTime = System.currentTimeMillis();
+        }
+        
+        /**
+         * Ensures buffers are large enough, especially for HTTP connections
+         */
+        public void ensureBufferCapacity(int desiredCapacity) {
+            // Check if input buffer needs resizing
+            if (inputBuffer.capacity() < desiredCapacity) {
+                ByteBuffer newBuffer = ByteBuffer.allocateDirect(desiredCapacity);
+                if (inputBuffer.position() > 0) {
+                    inputBuffer.flip();
+                    newBuffer.put(inputBuffer);
+                }
+                inputBuffer = newBuffer;
+                logInfo("Increased input buffer capacity to " + desiredCapacity);
+            }
+            
+            // Check if output buffer needs resizing
+            if (outputBuffer.capacity() < desiredCapacity) {
+                ByteBuffer newBuffer = ByteBuffer.allocateDirect(desiredCapacity);
+                if (outputBuffer.position() > 0) {
+                    outputBuffer.flip();
+                    newBuffer.put(outputBuffer);
+                }
+                outputBuffer = newBuffer;
+                logInfo("Increased output buffer capacity to " + desiredCapacity);
+            }
+        }
+        
+        /**
+         * Adjusts buffer sizes based on the selected proxy type
+         */
+        public void adjustBuffersForProxyType() {
+            if (selectedProxy != null && selectedProxy.isHttp()) {
+                // HTTP proxies need much larger buffers
+                ensureBufferCapacity(262144); // 256 KB
+            } else if (selectedProxy != null && "direct".equals(selectedProxy.getProtocol())) {
+                // Direct connections for HTTPS need larger buffers too
+                ensureBufferCapacity(131072); // 128 KB
+            }
         }
     }
 
@@ -802,6 +843,13 @@ public class ProxyRotateService {
             return;
         }
         
+        // Check if we need to resize the buffer
+        if (state.inputBuffer.capacity() < bufferSize) {
+            // Allocate a larger buffer
+            ByteBuffer newBuffer = ByteBuffer.allocateDirect(bufferSize);
+            state.inputBuffer = newBuffer;
+        }
+        
         ByteBuffer buffer = state.inputBuffer;
         buffer.clear();
         
@@ -827,72 +875,88 @@ public class ProxyRotateService {
         // Process the data based on the current connection stage
         buffer.flip();
         
-        switch (state.stage) {
-            case INITIAL:
-                processInitialClientData(clientChannel, state, buffer);
-                break;
-                
-            case SOCKS5_CONNECT:
-                processSocks5ConnectRequest(clientChannel, state, buffer);
-                break;
-                
-            case PROXY_CONNECTED:
-                // Forward data to the proxy
-                SocketChannel proxyChannel = proxyConnections.get(clientChannel);
-                if (proxyChannel != null && proxyChannel.isConnected()) {
-                    // Check if this is a direct connection to a Collaborator domain
-                    if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
-                        // For direct connections (especially HTTPS), we need to ensure efficient data handling
-                        try {
-                            // For TLS traffic, make sure we're writing all data in a single call if possible
-                            int totalBytesToWrite = buffer.remaining();
-                            if (totalBytesToWrite > 0) {
-                                logInfo("Forwarding " + totalBytesToWrite + " bytes from client to direct connection");
-                                
-                                // Attempt to write all data at once for efficiency
-                                int written = proxyChannel.write(buffer);
-                                
-                                // If we couldn't write everything at once, keep trying
-                                if (buffer.hasRemaining()) {
-                                    logInfo("Couldn't write all data at once, remaining: " + buffer.remaining());
+        try {
+            switch (state.stage) {
+                case INITIAL:
+                    processInitialClientData(clientChannel, state, buffer);
+                    break;
+                    
+                case SOCKS5_CONNECT:
+                    processSocks5ConnectRequest(clientChannel, state, buffer);
+                    break;
+                    
+                case PROXY_CONNECTED:
+                    // Forward data to the proxy
+                    SocketChannel proxyChannel = proxyConnections.get(clientChannel);
+                    if (proxyChannel != null && proxyChannel.isConnected()) {
+                        // Check if this is a direct connection to a Collaborator domain
+                        if (state.selectedProxy != null && "direct".equals(state.selectedProxy.getProtocol())) {
+                            // For direct connections (especially HTTPS), we need to ensure efficient data handling
+                            try {
+                                // For TLS traffic, make sure we're writing all data in a single call if possible
+                                int totalBytesToWrite = buffer.remaining();
+                                if (totalBytesToWrite > 0) {
+                                    logInfo("Forwarding " + totalBytesToWrite + " bytes from client to direct connection");
                                     
-                                    // Register for write interest to send remaining data
-                                    SelectionKey proxyKey = proxyChannel.keyFor(selector);
-                                    if (proxyKey != null && proxyKey.isValid()) {
-                                        // Create a new buffer with remaining data
-                                        ByteBuffer remainingData = ByteBuffer.allocateDirect(buffer.remaining());
-                                        remainingData.put(buffer);
-                                        remainingData.flip();
+                                    // Attempt to write all data at once for efficiency
+                                    int written = proxyChannel.write(buffer);
+                                    
+                                    // If we couldn't write everything at once, keep trying
+                                    if (buffer.hasRemaining()) {
+                                        logInfo("Couldn't write all data at once, remaining: " + buffer.remaining());
                                         
-                                        // Store the remaining data with the connection state
-                                        state.outputBuffer = remainingData;
-                                        
-                                        // Enable write interest
-                                        proxyKey.interestOps(proxyKey.interestOps() | SelectionKey.OP_WRITE);
+                                        // Register for write interest to send remaining data
+                                        SelectionKey proxyKey = proxyChannel.keyFor(selector);
+                                        if (proxyKey != null && proxyKey.isValid()) {
+                                            // Create a new buffer with remaining data
+                                            ByteBuffer remainingData = ByteBuffer.allocateDirect(buffer.remaining());
+                                            remainingData.put(buffer);
+                                            remainingData.flip();
+                                            
+                                            // Store the remaining data with the connection state
+                                            state.outputBuffer = remainingData;
+                                            
+                                            // Enable write interest
+                                            proxyKey.interestOps(proxyKey.interestOps() | SelectionKey.OP_WRITE);
+                                        }
                                     }
                                 }
+                            } catch (IOException e) {
+                                logError("Error forwarding data to direct connection: " + e.getMessage());
+                                closeConnection(clientChannel);
                             }
-                        } catch (IOException e) {
-                            logError("Error forwarding data to direct connection: " + e.getMessage());
-                            closeConnection(clientChannel);
-                        }
-                    } else {
-                        // Regular proxy forwarding
-                        ByteBuffer forwardBuffer = ByteBuffer.allocate(buffer.remaining());
-                        forwardBuffer.put(buffer);
-                        forwardBuffer.flip();
-                        
-                        while (forwardBuffer.hasRemaining()) {
-                            proxyChannel.write(forwardBuffer);
+                        } else {
+                            // Regular proxy forwarding
+                            ByteBuffer forwardBuffer = ByteBuffer.allocate(buffer.remaining());
+                            forwardBuffer.put(buffer);
+                            forwardBuffer.flip();
+                            
+                            while (forwardBuffer.hasRemaining()) {
+                                proxyChannel.write(forwardBuffer);
+                            }
                         }
                     }
-                }
-                break;
-                
-            default:
-                logError("Unexpected client data in state: " + state.stage);
-                cancelAndCloseChannel(clientChannel);
-                break;
+                    break;
+                    
+                default:
+                    logError("Unexpected client data in state: " + state.stage);
+                    cancelAndCloseChannel(clientChannel);
+                    break;
+            }
+        } catch (BufferOverflowException e) {
+            logError("Buffer overflow in handleClientRead: " + e.toString() + " - buffer capacity: " + 
+                    buffer.capacity() + ", position: " + buffer.position() + ", limit: " + buffer.limit());
+            
+            // Try to handle the error by allocating a larger buffer
+            int newSize = buffer.capacity() * 2;
+            logInfo("Increasing buffer size to " + newSize + " bytes");
+            ByteBuffer newBuffer = ByteBuffer.allocateDirect(newSize);
+            buffer.flip(); // Prepare for reading
+            newBuffer.put(buffer); // Copy existing data
+            state.inputBuffer = newBuffer;
+            
+            // Continue processing
+            closeConnection(clientChannel);
         }
     }
     
@@ -922,6 +986,13 @@ public class ProxyRotateService {
             return;
         }
         
+        // Check if we need to resize the buffer
+        if (state.inputBuffer.capacity() < bufferSize) {
+            // Allocate a larger buffer
+            ByteBuffer newBuffer = ByteBuffer.allocateDirect(bufferSize);
+            state.inputBuffer = newBuffer;
+        }
+        
         // Use a shared buffer for better performance and less garbage collection
         ByteBuffer buffer = state.inputBuffer;
         buffer.clear();
@@ -947,37 +1018,58 @@ public class ProxyRotateService {
         
         buffer.flip();
         
-        // Process based on the current connection stage
-        switch (state.stage) {
-            case SOCKS5_AUTH:
-                processSocks5AuthResponse(clientChannel, proxyChannel, state, buffer, false);
-                break;
+        try {
+            // Process based on the current connection stage
+            switch (state.stage) {
+                case SOCKS5_AUTH:
+                    processSocks5AuthResponse(clientChannel, proxyChannel, state, buffer, false);
+                    break;
+                    
+                case SOCKS5_AUTH_RESPONSE:
+                    processSocks5AuthResponse(clientChannel, proxyChannel, state, buffer, true);
+                    break;
+                    
+                case SOCKS5_CONNECT:
+                    processSocks5ConnectResponse(clientChannel, proxyChannel, state, buffer);
+                    break;
+                    
+                case SOCKS4_CONNECT:
+                    processSocks4ConnectResponse(clientChannel, proxyChannel, state, buffer);
+                    break;
+                    
+                case HTTP_CONNECT:
+                    processHttpConnectResponse(clientChannel, proxyChannel, state, buffer);
+                    break;
+                    
+                case PROXY_CONNECTED:
+                    // Forward data to client
+                    forwardDataToClient(clientChannel, state, buffer);
+                    break;
+                    
+                default:
+                    logError("Unexpected proxy data in state: " + state.stage);
+                    closeConnection(clientChannel);
+                    break;
+            }
+        } catch (BufferOverflowException e) {
+            logError("Buffer overflow in handleProxyRead: " + e.toString() + " - buffer capacity: " + 
+                    buffer.capacity() + ", position: " + buffer.position() + ", limit: " + buffer.limit() + 
+                    ", bytes read: " + bytesRead);
+            
+            // If this is HTTP proxy, we need larger buffers
+            if (state.selectedProxy != null && state.selectedProxy.isHttp()) {
+                // Try to handle the error by allocating a larger buffer for HTTP
+                int newSize = Math.max(buffer.capacity() * 2, 1048576); // At least 1MB for HTTP
+                logInfo("Increasing buffer size for HTTP proxy to " + newSize + " bytes");
                 
-            case SOCKS5_AUTH_RESPONSE:
-                processSocks5AuthResponse(clientChannel, proxyChannel, state, buffer, true);
-                break;
-                
-            case SOCKS5_CONNECT:
-                processSocks5ConnectResponse(clientChannel, proxyChannel, state, buffer);
-                break;
-                
-            case SOCKS4_CONNECT:
-                processSocks4ConnectResponse(clientChannel, proxyChannel, state, buffer);
-                break;
-                
-            case HTTP_CONNECT:
-                processHttpConnectResponse(clientChannel, proxyChannel, state, buffer);
-                break;
-                
-            case PROXY_CONNECTED:
-                // Forward data to client
-                forwardDataToClient(clientChannel, state, buffer);
-                break;
-                
-            default:
-                logError("Unexpected proxy data in state: " + state.stage);
-                closeConnection(clientChannel);
-                break;
+                ByteBuffer newBuffer = ByteBuffer.allocateDirect(newSize);
+                buffer.flip(); // Prepare for reading
+                newBuffer.put(buffer); // Copy existing data
+                state.inputBuffer = newBuffer;
+            }
+            
+            // Close the connection to prevent further issues
+            closeConnection(clientChannel);
         }
     }
     
@@ -1370,6 +1462,9 @@ public class ProxyRotateService {
                 ProxyEntry directProxy = ProxyEntry.createDirect(state.targetHost, state.targetPort);
                 state.selectedProxy = directProxy;
                 
+                // Adjust buffer sizes for direct connection
+                state.adjustBuffersForProxyType();
+                
                 // Create and configure direct socket channel
                 SocketChannel directChannel = SocketChannel.open();
                 directChannel.configureBlocking(false);
@@ -1410,10 +1505,6 @@ public class ProxyRotateService {
                     
                     // Update state to connected
                     state.stage = ConnectionStage.PROXY_CONNECTED;
-                    
-                    // For direct connections, especially HTTPS, allocate larger buffers
-                    state.inputBuffer = ByteBuffer.allocateDirect(262144); // 256KB
-                    state.outputBuffer = ByteBuffer.allocateDirect(262144);
                     
                     // Register for reading
                     directChannel.register(selector, SelectionKey.OP_READ);
@@ -1460,6 +1551,9 @@ public class ProxyRotateService {
         // Save the selected proxy
         state.selectedProxy = proxy;
         
+        // Adjust buffer sizes based on proxy type
+        state.adjustBuffersForProxyType();
+        
         try {
             // Create and configure the proxy socket channel
             SocketChannel proxyChannel = SocketChannel.open();
@@ -1468,6 +1562,13 @@ public class ProxyRotateService {
             
             // Set socket options
             proxySocket.setTcpNoDelay(true);
+            
+            // For HTTP proxies, set larger socket buffers
+            if (proxy.isHttp()) {
+                int largeBuffer = 262144; // 256KB
+                proxySocket.setReceiveBufferSize(largeBuffer);
+                proxySocket.setSendBufferSize(largeBuffer);
+            }
             
             // Associate the channels
             proxyConnections.put(clientChannel, proxyChannel);
@@ -2285,46 +2386,49 @@ public class ProxyRotateService {
      * Send an HTTP CONNECT request to the proxy
      */
     private void sendHttpConnectRequest(SocketChannel proxyChannel, ConnectionState state) throws IOException {
-        // Pre-calculate the buffer size for better performance
-        int bufferSize = 64 + state.targetHost.length() * 2 + 10; // Base headers + host twice + port digits
+        // Ensure we have a large enough buffer for HTTP operations
+        state.ensureBufferCapacity(32768); // At least 32KB
         
-        // Add space for authentication if needed
-        if (state.selectedProxy != null && state.selectedProxy.isAuthenticated()) {
-            // Basic auth adds: "Proxy-Authorization: Basic " + base64(user:pass) + "\r\n"
-            String auth = state.selectedProxy.getUsername() + ":" + state.selectedProxy.getPassword();
-            // Roughly estimate base64 size (4/3 of input + padding)
-            int base64Size = (auth.length() * 4 / 3) + 4;
-            bufferSize += 28 + base64Size; // Header name + encoded credentials
-        }
+        // Use an efficient StringBuilder to build the request
+        StringBuilder requestBuilder = new StringBuilder(512);
         
-        // Create a properly sized buffer
-        ByteBuffer headerBuffer = ByteBuffer.allocate(bufferSize);
-        
-        // Prepare the CONNECT request using byte operations for better performance
         // CONNECT host:port HTTP/1.1\r\n
-        String connectLine = "CONNECT " + state.targetHost + ":" + state.targetPort + " HTTP/1.1\r\n";
-        headerBuffer.put(connectLine.getBytes());
+        requestBuilder.append("CONNECT ")
+                     .append(state.targetHost)
+                     .append(':')
+                     .append(state.targetPort)
+                     .append(" HTTP/1.1\r\n");
         
         // Host: host:port\r\n
-        String hostLine = "Host: " + state.targetHost + ":" + state.targetPort + "\r\n";
-        headerBuffer.put(hostLine.getBytes());
+        requestBuilder.append("Host: ")
+                     .append(state.targetHost)
+                     .append(':')
+                     .append(state.targetPort)
+                     .append("\r\n");
         
         // Add authentication if needed
         if (state.selectedProxy != null && state.selectedProxy.isAuthenticated()) {
             String auth = state.selectedProxy.getUsername() + ":" + state.selectedProxy.getPassword();
             String encodedAuth = java.util.Base64.getEncoder().encodeToString(auth.getBytes());
-            String authLine = "Proxy-Authorization: Basic " + encodedAuth + "\r\n";
-            headerBuffer.put(authLine.getBytes());
+            requestBuilder.append("Proxy-Authorization: Basic ")
+                         .append(encodedAuth)
+                         .append("\r\n");
             
             logInfo("Added Basic authentication for HTTP proxy");
         }
         
         // Add standard headers
-        headerBuffer.put("Connection: keep-alive\r\n".getBytes());
-        headerBuffer.put("User-Agent: BurpProxyRotate\r\n".getBytes());
-        headerBuffer.put("\r\n".getBytes()); // End request with blank line
+        requestBuilder.append("Connection: keep-alive\r\n");
+        requestBuilder.append("User-Agent: BurpProxyRotate\r\n");
+        requestBuilder.append("\r\n"); // End request with blank line
         
-        // Flip the buffer for writing
+        // Convert to bytes
+        String request = requestBuilder.toString();
+        byte[] requestBytes = request.getBytes();
+        
+        // Create a properly sized direct buffer
+        ByteBuffer headerBuffer = ByteBuffer.allocateDirect(requestBytes.length);
+        headerBuffer.put(requestBytes);
         headerBuffer.flip();
         
         // Send the request in one operation
@@ -2338,6 +2442,16 @@ public class ProxyRotateService {
      */
     private void processHttpConnectResponse(SocketChannel clientChannel, SocketChannel proxyChannel, 
                                           ConnectionState state, ByteBuffer buffer) throws IOException {
+        // Make sure we have enough buffer capacity for large HTTP responses
+        if (buffer.capacity() < 16384) { // Ensure at least 16KB
+            ByteBuffer newBuffer = ByteBuffer.allocateDirect(16384);
+            buffer.flip();
+            newBuffer.put(buffer);
+            buffer = newBuffer;
+            state.inputBuffer = buffer;
+            buffer.flip();
+        }
+        
         // Process the HTTP response more efficiently at byte level
         byte[] responseBytes = new byte[buffer.remaining()];
         buffer.get(responseBytes);
@@ -2361,8 +2475,9 @@ public class ProxyRotateService {
                     }
                 }
                 
-                // Log the status line
-                logInfo("Received HTTP response: " + new String(responseBytes, 0, endOfFirstLine));
+                // Log the status line (safely truncated if too long)
+                String statusLine = new String(responseBytes, 0, Math.min(endOfFirstLine, 100));
+                logInfo("Received HTTP response: " + statusLine + (endOfFirstLine > 100 ? "..." : ""));
                 
                 // If we didn't find 200, check if it might be a 407 (auth required)
                 if (!found200) {
@@ -2395,8 +2510,12 @@ public class ProxyRotateService {
         if (endOfFirstLine == -1) {
             // We didn't receive a complete line yet, buffer and wait for more data
             logInfo("Incomplete HTTP response, waiting for more data");
-            // Create a new buffer with the remaining data
-            ByteBuffer remainingData = ByteBuffer.wrap(responseBytes);
+            
+            // Create a new buffer with the remaining data - use a larger size for HTTP
+            int bufferSize = Math.max(responseBytes.length * 2, 32768); // At least 32KB
+            ByteBuffer remainingData = ByteBuffer.allocateDirect(bufferSize);
+            remainingData.put(responseBytes);
+            remainingData.flip();
             state.outputBuffer = remainingData;
             return;
         }
@@ -2414,9 +2533,13 @@ public class ProxyRotateService {
             
             if (endOfHeaders == -1) {
                 // Headers not complete yet, buffer and wait for more
-                logInfo("HTTP headers incomplete, waiting for more data");
-                // Create a new buffer with the remaining data
-                ByteBuffer remainingData = ByteBuffer.wrap(responseBytes);
+                logInfo("HTTP headers incomplete, waiting for more data (received " + responseBytes.length + " bytes)");
+                
+                // Create a new buffer with the remaining data - use a larger size for HTTP
+                int bufferSize = Math.max(responseBytes.length * 2, 32768); // At least 32KB
+                ByteBuffer remainingData = ByteBuffer.allocateDirect(bufferSize);
+                remainingData.put(responseBytes);
+                remainingData.flip();
                 state.outputBuffer = remainingData;
                 return;
             }
@@ -2437,16 +2560,18 @@ public class ProxyRotateService {
             // If there's data after the headers, that's the beginning of the tunneled connection
             if (endOfHeaders + 1 < responseBytes.length) {
                 // Create a buffer with just the body part to forward to the client
-                ByteBuffer bodyBuffer = ByteBuffer.wrap(responseBytes, endOfHeaders + 1, 
-                                                     responseBytes.length - (endOfHeaders + 1));
+                ByteBuffer bodyBuffer = ByteBuffer.allocateDirect(responseBytes.length - (endOfHeaders + 1));
+                bodyBuffer.put(responseBytes, endOfHeaders + 1, responseBytes.length - (endOfHeaders + 1));
+                bodyBuffer.flip();
+                
                 if (bodyBuffer.hasRemaining()) {
                     clientChannel.write(bodyBuffer);
                 }
             }
         } else {
             // Other error or unsupported status
-            String statusLine = new String(responseBytes, 0, Math.min(responseBytes.length, 80));
-            logError("HTTP CONNECT failed: " + statusLine);
+            String statusLine = new String(responseBytes, 0, Math.min(responseBytes.length, 100));
+            logError("HTTP CONNECT failed: " + statusLine + (responseBytes.length > 100 ? "..." : ""));
             
             if (state.socksVersion == 5) {
                 sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
