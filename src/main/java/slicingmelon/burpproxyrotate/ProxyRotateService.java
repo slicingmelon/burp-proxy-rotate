@@ -104,14 +104,14 @@ public class ProxyRotateService {
         private byte addressType;
         private int socksVersion;
         private ProxyEntry selectedProxy;
-        private String errorMessage;
-        private long creationTime;
+        //private String errorMessage;
+        //private long creationTime;
         
         public ConnectionState() {
             // Use direct buffers for better I/O performance
             this.inputBuffer = ByteBuffer.allocateDirect(bufferSize);
             this.outputBuffer = ByteBuffer.allocateDirect(bufferSize);
-            this.creationTime = System.currentTimeMillis();
+            //this.creationTime = System.currentTimeMillis();
         }
         
         /**
