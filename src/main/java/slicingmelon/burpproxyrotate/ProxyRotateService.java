@@ -40,18 +40,15 @@ import java.nio.BufferOverflowException;
 public class ProxyRotateService {
     // Default settings
     private int bufferSize = 8092; // 8KB
-    private int connectionTimeout = 20000; // 20 seconds
-    private int socketTimeout = 120000; // 120 seconds
-    private int maxRetryCount = 2; // Number of proxies to try before giving up
-    private int maxConnectionsPerProxy = 50; // Maximum connections per proxy
     private int idleTimeoutSec = 60; // Idle timeout in seconds
+    private int maxConnectionsPerProxy = 50; // Maximum connections per proxy
     
     // Bypass configuration for Burp Collaborator domains
     private boolean bypassCollaborator = true;
     private final List<String> bypassDomains = new ArrayList<>();
     
     // Proxy selection mode
-    private boolean useRandomProxySelection = false; // Default to round-robin
+    private boolean useRandomProxySelection = true; // Default to random proxy selection
 
     private final Logging logging;
     private final List<ProxyEntry> proxyList;
@@ -177,36 +174,14 @@ public class ProxyRotateService {
     /**
      * Sets the service settings.
      */
-    public void setSettings(int bufferSize, int connectionTimeout, int socketTimeout, int maxRetryCount, int maxConnectionsPerProxy) {
+    public void setSettings(int bufferSize, int idleTimeoutSec, int maxConnectionsPerProxy) {
         this.bufferSize = bufferSize;
-        this.connectionTimeout = connectionTimeout;
-        this.socketTimeout = socketTimeout;
-        this.maxRetryCount = maxRetryCount;
-        this.maxConnectionsPerProxy = maxConnectionsPerProxy;
-        this.idleTimeoutSec = Math.max(30, socketTimeout / 2000); // Half of socket timeout, but minimum 30 seconds
-        
-        logInfo("Settings updated: bufferSize=" + bufferSize + ", connectionTimeout=" + connectionTimeout + 
-                "ms, socketTimeout=" + socketTimeout + "ms, maxRetryCount=" + maxRetryCount + 
-                ", maxConnectionsPerProxy=" + maxConnectionsPerProxy +
-                ", idleTimeoutSec=" + idleTimeoutSec);
-    }
-
-    /**
-     * Sets the proxy rotate service settings with explicit connection pool settings.
-     */
-    public void setSettings(int bufferSize, int connectionTimeout, int socketTimeout, 
-                          int maxRetryCount, int maxConnectionsPerProxy, int idleTimeoutSec) {
-        this.bufferSize = bufferSize;
-        this.connectionTimeout = connectionTimeout;
-        this.socketTimeout = socketTimeout;
-        this.maxRetryCount = maxRetryCount;
-        this.maxConnectionsPerProxy = maxConnectionsPerProxy;
         this.idleTimeoutSec = idleTimeoutSec;
+        this.maxConnectionsPerProxy = maxConnectionsPerProxy;
         
-        logInfo("Settings updated: bufferSize=" + bufferSize + ", connectionTimeout=" + connectionTimeout + 
-                "ms, socketTimeout=" + socketTimeout + "ms, maxRetryCount=" + maxRetryCount + 
-                ", maxConnectionsPerProxy=" + maxConnectionsPerProxy +
-                ", idleTimeoutSec=" + idleTimeoutSec);
+        logInfo("Settings updated: bufferSize=" + bufferSize + 
+                ", idleTimeoutSec=" + idleTimeoutSec + 
+                ", maxConnectionsPerProxy=" + maxConnectionsPerProxy);
     }
 
     /**

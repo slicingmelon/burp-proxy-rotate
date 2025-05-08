@@ -59,9 +59,7 @@ public class BurpProxyRotate implements BurpExtension {
     
     // Settings with defaults
     private int bufferSize = 8092; // 8KB
-    private int connectionTimeoutSec = 20;
-    private int socketTimeoutSec = 120; 
-    private int maxRetryCount = 2;
+    private int idleTimeoutSec = 60; // Idle timeout in seconds
     private int maxConnectionsPerProxy = 50;
     private boolean loggingEnabled = true;
     private boolean bypassCollaborator = true; // Default to bypass Collaborator
@@ -69,9 +67,7 @@ public class BurpProxyRotate implements BurpExtension {
     
     // UI components for settings
     private JSpinner bufferSizeSpinner;
-    private JSpinner connectionTimeoutSpinner;
-    private JSpinner socketTimeoutSpinner;
-    private JSpinner maxRetrySpinner;
+    private JSpinner idleTimeoutSpinner;
     private JSpinner maxConnectionsPerProxySpinner;
     private JCheckBox enableLoggingCheckbox;
     private JCheckBox bypassCollaboratorCheckbox;
@@ -82,9 +78,7 @@ public class BurpProxyRotate implements BurpExtension {
     private static final String PROXY_LIST_KEY = "proxyList";
     private static final String PORT_KEY = "localPort";
     private static final String BUFFER_SIZE_KEY = "bufferSize";
-    private static final String CONNECTION_TIMEOUT_KEY = "connectionTimeout";
-    private static final String SOCKET_TIMEOUT_KEY = "socketTimeout";
-    private static final String MAX_RETRY_KEY = "maxRetry";
+    private static final String IDLE_TIMEOUT_KEY = "idleTimeout";
     private static final String MAX_CONNECTIONS_PER_PROXY_KEY = "maxConnectionsPerProxy";
     private static final String LOGGING_ENABLED_KEY = "loggingEnabled";
     private static final String BYPASS_COLLABORATOR_KEY = "bypassCollaborator";
@@ -96,9 +90,7 @@ public class BurpProxyRotate implements BurpExtension {
 
     // Add default constants
     private static final int DEFAULT_BUFFER_SIZE = 8092;
-    private static final int DEFAULT_CONNECTION_TIMEOUT = 20;
-    private static final int DEFAULT_SOCKET_TIMEOUT = 120;
-    private static final int DEFAULT_MAX_RETRY = 2;
+    private static final int DEFAULT_IDLE_TIMEOUT = 60;
     private static final int DEFAULT_MAX_CONNECTIONS_PER_PROXY = 50;
 
     @Override
@@ -239,28 +231,10 @@ public class BurpProxyRotate implements BurpExtension {
             }
         }
         
-        String connectionTimeoutSetting = api.persistence().preferences().getString(CONNECTION_TIMEOUT_KEY);
-        if (connectionTimeoutSetting != null) {
+        String idleTimeoutSetting = api.persistence().preferences().getString(IDLE_TIMEOUT_KEY);
+        if (idleTimeoutSetting != null) {
             try {
-                connectionTimeoutSec = Integer.parseInt(connectionTimeoutSetting);
-            } catch (NumberFormatException e) {
-                // Use default
-            }
-        }
-        
-        String socketTimeoutSetting = api.persistence().preferences().getString(SOCKET_TIMEOUT_KEY);
-        if (socketTimeoutSetting != null) {
-            try {
-                socketTimeoutSec = Integer.parseInt(socketTimeoutSetting);
-            } catch (NumberFormatException e) {
-                // Use default
-            }
-        }
-        
-        String maxRetrySetting = api.persistence().preferences().getString(MAX_RETRY_KEY);
-        if (maxRetrySetting != null) {
-            try {
-                maxRetryCount = Integer.parseInt(maxRetrySetting);
+                idleTimeoutSec = Integer.parseInt(idleTimeoutSetting);
             } catch (NumberFormatException e) {
                 // Use default
             }
@@ -374,9 +348,7 @@ public class BurpProxyRotate implements BurpExtension {
         api.persistence().preferences().setString(PROXY_LIST_KEY, proxyListToString());
         api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
         api.persistence().preferences().setString(BUFFER_SIZE_KEY, String.valueOf(bufferSize));
-        api.persistence().preferences().setString(CONNECTION_TIMEOUT_KEY, String.valueOf(connectionTimeoutSec));
-        api.persistence().preferences().setString(SOCKET_TIMEOUT_KEY, String.valueOf(socketTimeoutSec));
-        api.persistence().preferences().setString(MAX_RETRY_KEY, String.valueOf(maxRetryCount));
+        api.persistence().preferences().setString(IDLE_TIMEOUT_KEY, String.valueOf(idleTimeoutSec));
         api.persistence().preferences().setString(MAX_CONNECTIONS_PER_PROXY_KEY, String.valueOf(maxConnectionsPerProxy));
         api.persistence().preferences().setString(LOGGING_ENABLED_KEY, String.valueOf(loggingEnabled));
         api.persistence().preferences().setString(BYPASS_COLLABORATOR_KEY, String.valueOf(bypassCollaborator));
@@ -864,9 +836,7 @@ public class BurpProxyRotate implements BurpExtension {
         // Configure the service
         socksProxyService.setSettings(
                 bufferSize,
-                connectionTimeoutSec * 1000, // Convert to milliseconds
-                socketTimeoutSec * 1000,     // Convert to milliseconds
-                maxRetryCount,
+                idleTimeoutSec,
                 maxConnectionsPerProxy
         );
         
@@ -1612,54 +1582,24 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(bufferSizeSpinner, gbc);
         
-        // Connection Timeout
+        // Idle Timeout
         gbc.gridx = 0;
         gbc.gridy = 1;
-        controlsPanel.add(new JLabel("Connection Timeout (sec):"), gbc);
+        controlsPanel.add(new JLabel("Idle Timeout (sec):"), gbc);
         
-        connectionTimeoutSpinner = new JSpinner(new SpinnerNumberModel(connectionTimeoutSec, 1, 300, 1));
-        connectionTimeoutSpinner.addChangeListener(_ -> {
-            connectionTimeoutSec = (Integer) connectionTimeoutSpinner.getValue();
+        idleTimeoutSpinner = new JSpinner(new SpinnerNumberModel(idleTimeoutSec, 10, 600, 10));
+        idleTimeoutSpinner.addChangeListener(_ -> {
+            idleTimeoutSec = (Integer) idleTimeoutSpinner.getValue();
             saveSettings();
-            logMessage("Connection timeout updated to " + connectionTimeoutSec + " seconds");
+            logMessage("Idle timeout updated to " + idleTimeoutSec + " seconds");
         });
         
         gbc.gridx = 1;
-        controlsPanel.add(connectionTimeoutSpinner, gbc);
-        
-        // Socket Timeout
-        gbc.gridx = 0;
-        gbc.gridy = 2;
-        controlsPanel.add(new JLabel("Socket Timeout (sec):"), gbc);
-        
-        socketTimeoutSpinner = new JSpinner(new SpinnerNumberModel(socketTimeoutSec, 10, 3600, 10));
-        socketTimeoutSpinner.addChangeListener(_ -> {
-            socketTimeoutSec = (Integer) socketTimeoutSpinner.getValue();
-            saveSettings();
-            logMessage("Socket timeout updated to " + socketTimeoutSec + " seconds");
-        });
-        
-        gbc.gridx = 1;
-        controlsPanel.add(socketTimeoutSpinner, gbc);
-        
-        // Max Retry Count
-        gbc.gridx = 0;
-        gbc.gridy = 3;
-        controlsPanel.add(new JLabel("Max Retry Count:"), gbc);
-        
-        maxRetrySpinner = new JSpinner(new SpinnerNumberModel(maxRetryCount, 0, 10, 1));
-        maxRetrySpinner.addChangeListener(_ -> {
-            maxRetryCount = (Integer) maxRetrySpinner.getValue();
-            saveSettings();
-            logMessage("Max retry count updated to " + maxRetryCount);
-        });
-        
-        gbc.gridx = 1;
-        controlsPanel.add(maxRetrySpinner, gbc);
+        controlsPanel.add(idleTimeoutSpinner, gbc);
         
         // Max Connections Per Proxy
         gbc.gridx = 0;
-        gbc.gridy = 4;
+        gbc.gridy = 2;
         controlsPanel.add(new JLabel("Max Connections Per Proxy:"), gbc);
         
         maxConnectionsPerProxySpinner = new JSpinner(new SpinnerNumberModel(maxConnectionsPerProxy, 1, 500, 10));
@@ -1674,7 +1614,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         // Enable Logging
         gbc.gridx = 0;
-        gbc.gridy = 5;
+        gbc.gridy = 3;
         controlsPanel.add(new JLabel("Enable Logging:"), gbc);
         
         enableLoggingCheckbox = new JCheckBox();
@@ -1693,7 +1633,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         // Bypass Collaborator
         gbc.gridx = 0;
-        gbc.gridy = 6;
+        gbc.gridy = 4;
         controlsPanel.add(new JLabel("Bypass Collaborator:"), gbc);
         
         bypassCollaboratorCheckbox = new JCheckBox();
@@ -1710,7 +1650,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         // Proxy Selection Mode
         gbc.gridx = 0;
-        gbc.gridy = 7;
+        gbc.gridy = 5;
         controlsPanel.add(new JLabel("Proxy Selection Mode:"), gbc);
         
         proxySelectionModeComboBox = new JComboBox<>(new String[]{"Round-Robin", "Random"});
@@ -1747,7 +1687,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         // Reset Default Settings Button
         gbc.gridx = 0;
-        gbc.gridy = 8;
+        gbc.gridy = 6;
         gbc.gridwidth = 2;
         gbc.fill = GridBagConstraints.NONE;
         gbc.anchor = GridBagConstraints.CENTER;
@@ -1773,24 +1713,19 @@ public class BurpProxyRotate implements BurpExtension {
         
         // Reset to defaults
         bufferSize = DEFAULT_BUFFER_SIZE;
-        connectionTimeoutSec = DEFAULT_CONNECTION_TIMEOUT;
-        socketTimeoutSec = DEFAULT_SOCKET_TIMEOUT;
-        maxRetryCount = DEFAULT_MAX_RETRY;
+        idleTimeoutSec = DEFAULT_IDLE_TIMEOUT;
         maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
         bypassCollaborator = true; // Default to bypass Collaborator
-        useRandomProxySelection = false; // Default to round-robin selection
+        useRandomProxySelection = true; // Default to random proxy selection
         
         // Restore logging state
         loggingEnabled = currentLoggingState;
         
         // Update UI
         bufferSizeSpinner.setValue(bufferSize);
-        connectionTimeoutSpinner.setValue(connectionTimeoutSec);
-        socketTimeoutSpinner.setValue(socketTimeoutSec);
-        maxRetrySpinner.setValue(maxRetryCount);
+        idleTimeoutSpinner.setValue(idleTimeoutSec);
         maxConnectionsPerProxySpinner.setValue(maxConnectionsPerProxy);
         
-        // Save settings
         saveSettings();
         
         logMessage("Settings reset to defaults (except logging)");
@@ -1799,9 +1734,7 @@ public class BurpProxyRotate implements BurpExtension {
         SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(null, 
             "Settings have been reset to default values:\n\n" +
             "• Buffer Size: " + bufferSize + " bytes\n" +
-            "• Connection Timeout: " + connectionTimeoutSec + " seconds\n" +
-            "• Socket Timeout: " + socketTimeoutSec + " seconds\n" +
-            "• Max Retry Count: " + maxRetryCount + "\n" +
+            "• Idle Timeout: " + idleTimeoutSec + " seconds\n" +
             "• Max Connections Per Proxy: " + maxConnectionsPerProxy + "\n\n" +
             "Logging setting was preserved: " + (loggingEnabled ? "Enabled" : "Disabled") + "\n" +
             "Bypass Collaborator setting was preserved: " + (bypassCollaborator ? "Enabled" : "Disabled"),
