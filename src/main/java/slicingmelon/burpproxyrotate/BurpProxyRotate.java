@@ -33,7 +33,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.Random;
 
 /**
- * Main Burp extension class for SOCKS proxy rotation.
+ * Main Burp Extension class
  */
 public class BurpProxyRotate implements BurpExtension {
     
@@ -65,6 +65,7 @@ public class BurpProxyRotate implements BurpExtension {
     private int maxConnectionsPerProxy = 50;
     private boolean loggingEnabled = true;
     private boolean bypassCollaborator = true; // Default to bypass Collaborator
+    private boolean useRandomProxySelection = false; // Default to round-robin selection
     
     // UI components for settings
     private JSpinner bufferSizeSpinner;
@@ -74,6 +75,7 @@ public class BurpProxyRotate implements BurpExtension {
     private JSpinner maxConnectionsPerProxySpinner;
     private JCheckBox enableLoggingCheckbox;
     private JCheckBox bypassCollaboratorCheckbox;
+    private JComboBox<String> proxySelectionModeComboBox;
     private JTextArea bypassDomainsTextArea;
     
     // Persistence keys
@@ -87,6 +89,7 @@ public class BurpProxyRotate implements BurpExtension {
     private static final String LOGGING_ENABLED_KEY = "loggingEnabled";
     private static final String BYPASS_COLLABORATOR_KEY = "bypassCollaborator";
     private static final String BYPASS_DOMAINS_KEY = "bypassDomains";
+    private static final String PROXY_SELECTION_MODE_KEY = "proxySelectionMode";
     
     private javax.swing.Timer statsUpdateTimer;
     private JLabel statsLabel;
@@ -281,6 +284,11 @@ public class BurpProxyRotate implements BurpExtension {
         if (bypassCollaboratorSetting != null) {
             bypassCollaborator = Boolean.parseBoolean(bypassCollaboratorSetting);
         }
+        
+        String proxySelectionModeSetting = api.persistence().preferences().getString(PROXY_SELECTION_MODE_KEY);
+        if (proxySelectionModeSetting != null) {
+            useRandomProxySelection = Boolean.parseBoolean(proxySelectionModeSetting);
+        }
     }
     
     /**
@@ -372,6 +380,7 @@ public class BurpProxyRotate implements BurpExtension {
         api.persistence().preferences().setString(MAX_CONNECTIONS_PER_PROXY_KEY, String.valueOf(maxConnectionsPerProxy));
         api.persistence().preferences().setString(LOGGING_ENABLED_KEY, String.valueOf(loggingEnabled));
         api.persistence().preferences().setString(BYPASS_COLLABORATOR_KEY, String.valueOf(bypassCollaborator));
+        api.persistence().preferences().setString(PROXY_SELECTION_MODE_KEY, String.valueOf(useRandomProxySelection));
     }
     
     /**
@@ -874,6 +883,9 @@ public class BurpProxyRotate implements BurpExtension {
                 }
             }
         }
+        
+        // Configure proxy selection mode
+        socksProxyService.setUseRandomProxySelection(useRandomProxySelection);
         
         // Start the service
         socksProxyService.start(finalPortToUse, 
@@ -1697,6 +1709,22 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(bypassCollaboratorCheckbox, gbc);
         
+        // Proxy Selection Mode
+        gbc.gridx = 0;
+        gbc.gridy = 7;
+        controlsPanel.add(new JLabel("Proxy Selection Mode:"), gbc);
+        
+        proxySelectionModeComboBox = new JComboBox<>(new String[]{"Round-Robin", "Random"});
+        proxySelectionModeComboBox.setSelectedItem(useRandomProxySelection ? "Random" : "Round-Robin");
+        proxySelectionModeComboBox.addActionListener(_ -> {
+            useRandomProxySelection = proxySelectionModeComboBox.getSelectedItem().equals("Random");
+            saveSettings();
+            logMessage("Proxy selection mode updated to " + (useRandomProxySelection ? "Random" : "Round-Robin"));
+        });
+        
+        gbc.gridx = 1;
+        controlsPanel.add(proxySelectionModeComboBox, gbc);
+        
         // Bypass Domains section
         JPanel bypassPanel = new JPanel(new BorderLayout());
         bypassPanel.setBorder(BorderFactory.createTitledBorder("Bypass Domains (one per line)"));
@@ -1751,6 +1779,7 @@ public class BurpProxyRotate implements BurpExtension {
         maxRetryCount = DEFAULT_MAX_RETRY;
         maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
         bypassCollaborator = true; // Default to bypass Collaborator
+        useRandomProxySelection = false; // Default to round-robin selection
         
         // Restore logging state
         loggingEnabled = currentLoggingState;

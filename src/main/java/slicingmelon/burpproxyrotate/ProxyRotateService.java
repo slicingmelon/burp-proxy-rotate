@@ -50,6 +50,9 @@ public class ProxyRotateService {
     private boolean bypassCollaborator = true;
     private final List<String> bypassDomains = new ArrayList<>();
     
+    // Proxy selection mode
+    private boolean useRandomProxySelection = false; // Default to round-robin
+
     private final Logging logging;
     private final List<ProxyEntry> proxyList;
     private final ReadWriteLock proxyListLock;
@@ -2163,8 +2166,9 @@ public class ProxyRotateService {
     }
     
     /**
-     * Selects a different proxy for each request to ensure proper rotation.
-     * Each call should return a different proxy than the previous call.
+     * Selects a proxy from the list based on the selected mode (round-robin or random).
+     * Round-robin ensures each request uses a different proxy in sequence.
+     * Random mode picks a completely random proxy for each request.
      */
     private ProxyEntry selectRandomActiveProxy() {
         // Fast path for empty proxy list
@@ -2191,19 +2195,30 @@ public class ProxyRotateService {
             return null;
         }
         
-        // Ensure we get a different proxy than last time by incrementing the index
-        synchronized (proxyRotationLock) {
-            // Get the next proxy in sequence to ensure rotation
-            lastProxyIndex = (lastProxyIndex + 1) % activeProxies.size();
-            ProxyEntry selectedProxy = activeProxies.get(lastProxyIndex);
+        // Choose a proxy based on the selection mode
+        ProxyEntry selectedProxy;
+        
+        if (useRandomProxySelection) {
+            // Random mode - pick any proxy at random
+            int randomIndex = random.nextInt(activeProxies.size());
+            selectedProxy = activeProxies.get(randomIndex);
             
-            // Log the selection to verify rotation
-            logInfo("Rotating proxy: " + selectedProxy.getProtocol() + "://" + 
-                  selectedProxy.getHost() + ":" + selectedProxy.getPort() + 
-                  " (proxy " + (lastProxyIndex + 1) + " of " + activeProxies.size() + ")");
-                  
-            return selectedProxy;
+            logInfo("Randomly selected proxy: " + selectedProxy.getProtocol() + "://" + 
+                selectedProxy.getHost() + ":" + selectedProxy.getPort() + 
+                " (proxy " + (randomIndex + 1) + " of " + activeProxies.size() + ")");
+        } else {
+            // Round-robin mode - get the next proxy in sequence
+            synchronized (proxyRotationLock) {
+                lastProxyIndex = (lastProxyIndex + 1) % activeProxies.size();
+                selectedProxy = activeProxies.get(lastProxyIndex);
+                
+                logInfo("Rotating proxy: " + selectedProxy.getProtocol() + "://" + 
+                    selectedProxy.getHost() + ":" + selectedProxy.getPort() + 
+                    " (proxy " + (lastProxyIndex + 1) + " of " + activeProxies.size() + ")");
+            }
         }
+        
+        return selectedProxy;
     }
     
     /**
@@ -2581,5 +2596,13 @@ public class ProxyRotateService {
             
             closeConnection(clientChannel);
         }
+    }
+
+    /**
+     * Sets whether to use random proxy selection instead of round-robin.
+     */
+    public void setUseRandomProxySelection(boolean useRandom) {
+        this.useRandomProxySelection = useRandom;
+        logInfo("Proxy selection mode set to: " + (useRandom ? "Random" : "Round-Robin"));
     }
 } 
