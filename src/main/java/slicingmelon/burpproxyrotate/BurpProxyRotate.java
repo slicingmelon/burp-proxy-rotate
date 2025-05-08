@@ -1,7 +1,8 @@
 /**
  * Burp Proxy Rotate
- * Author: slicingmelon <https://github.com/slicingmelon>
- * X: @pedro_infosec
+ * Author: slicingmelon 
+ * https://github.com/slicingmelon
+ * https://x.com/pedro_infosec
  * 
  * This extension routes each HTTP request through a different proxy from a provided list.
  */
@@ -361,7 +362,7 @@ public class BurpProxyRotate implements BurpExtension {
         // Use a text field with checkbox to toggle auto/manual
         JCheckBox randomPortCheckbox = new JCheckBox("Random Port", true);
         JSpinner portSpinner = new JSpinner(new SpinnerNumberModel(
-                configuredLocalPort > 0 ? configuredLocalPort : 9090, 
+                configuredLocalPort > 0 ? configuredLocalPort : 13920, 
                 1024, 65535, 1));
         portSpinner.setEnabled(!randomPortCheckbox.isSelected());
         
@@ -416,10 +417,10 @@ public class BurpProxyRotate implements BurpExtension {
         controlPanel.add(statsLabel, gbc);
         
         // Enable/Disable buttons
-        enableButton = new JButton("Start Proxy");
+        enableButton = new JButton("Enable Proxy Rotate");
         enableButton.addActionListener(_ -> enableProxyRotate());
         
-        disableButton = new JButton("Stop Proxy");
+        disableButton = new JButton("Disable Proxy Rotate");
         disableButton.addActionListener(_ -> disableProxyRotate());
         disableButton.setEnabled(false);
         

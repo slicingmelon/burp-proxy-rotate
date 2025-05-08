@@ -1,7 +1,8 @@
 /**
  * Burp Proxy Rotate
- * Author: slicingmelon <https://github.com/slicingmelon>
- * X: @pedro_infosec
+ * Author: slicingmelon 
+ * https://github.com/slicingmelon
+ * https://x.com/pedro_infosec
  * 
  * This extension routes each HTTP request through a different proxy from a provided list.
  */
@@ -33,8 +34,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.function.Consumer;
 
 /**
- * A service that randomly rotates SOCKS proxies for Burp Suite using Java NIO.
- * For each new connection, a different active SOCKS proxy is chosen.
+ * The core service that randomly rotates each HTTP request through a different proxy from a provided list.
  */
 public class ProxyRotateService {
     // Default settings
