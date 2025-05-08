@@ -84,12 +84,12 @@ public class ProxyRotateService {
     
     private BurpProxyRotate extension;
 
-    // Connection state enum
+    // Connection state
     private enum ConnectionStage {
         INITIAL, 
         SOCKS4_CONNECT, SOCKS4_CONNECTED,
         SOCKS5_AUTH, SOCKS5_AUTH_RESPONSE, SOCKS5_CONNECT, SOCKS5_CONNECTED,
-        HTTP_CONNECT, // New stage for HTTP CONNECT
+        HTTP_CONNECT,
         PROXY_CONNECT, PROXY_CONNECTED,
         ERROR
     }
@@ -115,7 +115,7 @@ public class ProxyRotateService {
         }
         
         /**
-         * Ensures buffers are large enough, especially for HTTP connections
+         * Helper function to ensure buffers are large enough, especially for HTTP(S) connections
          */
         public void ensureBufferCapacity(int desiredCapacity) {
             // Check if input buffer needs resizing
@@ -146,7 +146,7 @@ public class ProxyRotateService {
          */
         public void adjustBuffersForProxyType() {
             if (selectedProxy != null && selectedProxy.isHttp()) {
-                // HTTP proxies need much larger buffers
+                // HTTP proxies need much larger buffers?
                 ensureBufferCapacity(262144); // 256 KB
             } else if (selectedProxy != null && "direct".equals(selectedProxy.getProtocol())) {
                 // Direct connections for HTTPS need larger buffers too
@@ -2305,7 +2305,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Enables or disables bypassing proxies for Burp Collaborator domains.
+     * Enables or disables bypassing proxies for Burp Collaborator domains
      */
     public void setBypassCollaborator(boolean bypass) {
         if (this.bypassCollaborator != bypass) {
@@ -2315,7 +2315,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Adds a custom domain to bypass proxy.
+     * Helper function to add a custom domain to bypass proxy
      */
     public void addBypassDomain(String domain) {
         if (!bypassDomains.contains(domain)) {
@@ -2325,7 +2325,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Removes a bypass domain.
+     * Helper function to remove a bypass domain
      */
     public void removeBypassDomain(String domain) {
         if (bypassDomains.remove(domain)) {
@@ -2334,7 +2334,7 @@ public class ProxyRotateService {
     }
     
     /**
-     * Clears all bypass domains.
+     * Clears all bypass domains
      */
     public void clearBypassDomains() {
         bypassDomains.clear();
@@ -2505,7 +2505,6 @@ public class ProxyRotateService {
                     }
                 }
                 
-                // Log the status line (safely truncated if too long)
                 String statusLine = new String(responseBytes, 0, Math.min(endOfFirstLine, 100));
                 logInfo("Received HTTP response: " + statusLine + (endOfFirstLine > 100 ? "..." : ""));
                 
@@ -2519,8 +2518,8 @@ public class ProxyRotateService {
                         }
                     }
                     
+                    // Authentication required
                     if (found407) {
-                        // Authentication required
                         logError("HTTP proxy requires authentication or credentials are invalid");
                         
                         if (state.socksVersion == 5) {
@@ -2551,7 +2550,6 @@ public class ProxyRotateService {
         }
         
         if (isSuccessStatus) {
-            // Find end of headers (double CRLF)
             int endOfHeaders = -1;
             for (int i = 0; i < responseBytes.length - 3; i++) {
                 if (responseBytes[i] == '\r' && responseBytes[i + 1] == '\n' &&
@@ -2577,14 +2575,13 @@ public class ProxyRotateService {
             // Successfully connected
             logInfo("HTTP CONNECT successful");
             
-            // Send success response to the client based on SOCKS version
+            // Send success responss
             if (state.socksVersion == 5) {
                 sendSocks5SuccessResponse(clientChannel);
             } else {
                 sendSocks4SuccessResponse(clientChannel);
             }
             
-            // Update state to connected
             state.stage = ConnectionStage.PROXY_CONNECTED;
             
             // If there's data after the headers, that's the beginning of the tunneled connection
@@ -2599,7 +2596,6 @@ public class ProxyRotateService {
                 }
             }
         } else {
-            // Other error or unsupported status
             String statusLine = new String(responseBytes, 0, Math.min(responseBytes.length, 100));
             logError("HTTP CONNECT failed: " + statusLine + (responseBytes.length > 100 ? "..." : ""));
             
@@ -2614,7 +2610,7 @@ public class ProxyRotateService {
     }
 
     /**
-     * Sets whether to use random proxy selection instead of round-robin.
+     * Sets whether to use random proxy selection instead of round-robin
      */
     public void setUseRandomProxySelection(boolean useRandom) {
         if (this.useRandomProxySelection != useRandom) {

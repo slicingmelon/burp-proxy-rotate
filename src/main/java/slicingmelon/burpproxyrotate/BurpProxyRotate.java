@@ -239,7 +239,7 @@ public class BurpProxyRotate implements BurpExtension {
             try {
                 idleTimeoutSec = Integer.parseInt(idleTimeoutSetting);
             } catch (NumberFormatException e) {
-                // Use default
+                // default
             }
         }
         
@@ -248,7 +248,7 @@ public class BurpProxyRotate implements BurpExtension {
             try {
                 maxConnectionsPerProxy = Integer.parseInt(maxConnectionsPerProxySetting);
             } catch (NumberFormatException e) {
-                // Use default
+                // default
             }
         }
         
@@ -269,7 +269,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Loads the bypass domains from persistence and updates the UI.
+     * Loads the bypass domains from persistence and update the UI
      */
     private void loadBypassDomains() {
         String savedDomains = api.persistence().preferences().getString(BYPASS_DOMAINS_KEY);
@@ -285,18 +285,12 @@ public class BurpProxyRotate implements BurpExtension {
     }
 
     /**
-     * Updates the bypass domains in the SOCKS proxy service.
+     * Updates the bypass domains in the proxy service
      */
     private void updateBypassDomains(String domainsText) {
         if (socksProxyService != null) {
-            // Set bypass mode
             socksProxyService.setBypassCollaborator(bypassCollaborator);
             
-            // Clear existing domains
-            // Note: This assumes there's a clearBypassDomains() method in SocksProxyService
-            // You may need to add this or handle it differently
-            
-            // Add each domain
             String[] domains = domainsText.trim().split("\n");
             for (String domain : domains) {
                 domain = domain.trim();
@@ -305,8 +299,7 @@ public class BurpProxyRotate implements BurpExtension {
                 }
             }
         }
-        
-        // Save to persistence
+
         api.persistence().preferences().setString(BYPASS_DOMAINS_KEY, domainsText);
     }
     
@@ -326,16 +319,16 @@ public class BurpProxyRotate implements BurpExtension {
         proxyListLock.readLock().lock();
         try {
             for (ProxyEntry entry : proxyList) {
-                // Add protocol and auth if present
+                // proto and auth
                 sb.append(entry.getProtocol()).append("://");
                 
-                // Add authentication if present
+                // auth
                 if (entry.isAuthenticated()) {
                     sb.append(entry.getUsername()).append(":")
                       .append(entry.getPassword()).append("@");
                 }
                 
-                // Add host and port
+                // host:port
                 sb.append(entry.getHost()).append(":")
                   .append(entry.getPort()).append("\n");
             }
@@ -347,7 +340,6 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     private void saveSettings() {
-        // Save each setting
         api.persistence().preferences().setString(PROXY_LIST_KEY, proxyListToString());
         api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
         api.persistence().preferences().setString(BUFFER_SIZE_KEY, String.valueOf(bufferSize));
@@ -359,32 +351,26 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Creates the user interface components.
+     * UI components
      */
     private JComponent createUserInterface() {
-        // Create main panel with border layout
         JPanel mainPanel = new JPanel(new BorderLayout());
         mainPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
         
-        // Create top control panel
         JPanel controlPanel = new JPanel(new GridBagLayout());
         
-        // Create bottom panel for proxies
         JPanel proxyPanel = new JPanel(new BorderLayout());
         proxyPanel.setBorder(BorderFactory.createTitledBorder("SOCKS Proxies"));
         
-        // Create GridBagConstraints for the control panel
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 5, 5, 5);
         gbc.fill = GridBagConstraints.HORIZONTAL;
         
-        // Port input - now marked as "Auto" by default
         gbc.gridx = 0;
         gbc.gridy = 0;
         gbc.gridwidth = 1;
         controlPanel.add(new JLabel("Local port:"), gbc);
         
-        // Use a text field with checkbox to toggle auto/manual
         JCheckBox randomPortCheckbox = new JCheckBox("Random Port", true);
         JSpinner portSpinner = new JSpinner(new SpinnerNumberModel(
                 configuredLocalPort > 0 ? configuredLocalPort : 13920, 
@@ -395,7 +381,7 @@ public class BurpProxyRotate implements BurpExtension {
             boolean random = randomPortCheckbox.isSelected();
             portSpinner.setEnabled(!random);
             if (random) {
-                configuredLocalPort = 0; // Reset to auto mode
+                configuredLocalPort = 0;
             } else {
                 configuredLocalPort = (Integer) portSpinner.getValue();
             }
@@ -409,7 +395,6 @@ public class BurpProxyRotate implements BurpExtension {
             }
         });
         
-        // Create a panel for port controls
         JPanel portPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         portPanel.add(randomPortCheckbox);
         portPanel.add(portSpinner);
@@ -418,7 +403,6 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridy = 0;
         controlPanel.add(portPanel, gbc);
         
-        // If we've got a configured port, disable auto mode
         if (configuredLocalPort > 0) {
             randomPortCheckbox.setSelected(false);
             portSpinner.setEnabled(true);
@@ -427,21 +411,18 @@ public class BurpProxyRotate implements BurpExtension {
             portSpinner.setEnabled(false);
         }
         
-        // Status label
         statusLabel = new JLabel("Status: Stopped");
         gbc.gridx = 2;
         gbc.gridy = 0;
         gbc.gridwidth = 2;
         controlPanel.add(statusLabel, gbc);
         
-        // Stats label
         statsLabel = new JLabel("No active connections");
         gbc.gridx = 2;
         gbc.gridy = 1;
         gbc.gridwidth = 2;
         controlPanel.add(statsLabel, gbc);
         
-        // Enable/Disable buttons
         enableButton = new JButton("Enable Proxy Rotate");
         enableButton.addActionListener(_ -> enableProxyRotate());
         
@@ -449,7 +430,6 @@ public class BurpProxyRotate implements BurpExtension {
         disableButton.addActionListener(_ -> disableProxyRotate());
         disableButton.setEnabled(false);
         
-        // Create a panel to hold the buttons with fixed size
         JPanel controlButtonPanel = new JPanel(new GridLayout(1, 2, 10, 0));
         controlButtonPanel.add(enableButton);
         controlButtonPanel.add(disableButton);
@@ -459,31 +439,25 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridwidth = 2;
         controlPanel.add(controlButtonPanel, gbc);
         
-        // Proxy list/table
         proxyTableModel = new ProxyTableModel();
         JTable proxyTable = new JTable(proxyTableModel);
         proxyTable.setFillsViewportHeight(true);
         proxyTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         
-        // Setup custom rendering
         setupTableRenderer(proxyTable);
         
         JScrollPane scrollPane = new JScrollPane(proxyTable);
         scrollPane.setPreferredSize(new Dimension(600, 200));
         
-        // Create tabbed pane for different proxy addition methods
         JTabbedPane proxyAddTabs = new JTabbedPane();
         
-        // Single proxy panel
         JPanel singleAddPanel = new JPanel(new BorderLayout());
         
-        // Create a panel for the single unified input
         JPanel unifiedInputPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         JLabel unifiedLabel = new JLabel("Proxy URL:");
         JTextField unifiedField = new JTextField(25);
         unifiedField.setToolTipText("Format: socks5://host:port or socks4://host:port");
         
-        // Add placeholder text
         unifiedField.setText("socks5://host:port");
         unifiedField.setForeground(Color.GRAY);
         unifiedField.addFocusListener(new FocusAdapter() {
@@ -527,7 +501,6 @@ public class BurpProxyRotate implements BurpExtension {
             
             addProxy(proxy);
             
-            // Validate the newly added proxy
             new Thread(() -> {
                 validateProxy(proxy, 3);
                 updateProxyTable();
@@ -540,7 +513,6 @@ public class BurpProxyRotate implements BurpExtension {
         
         singleAddPanel.add(unifiedInputPanel, BorderLayout.CENTER);
         
-        // Bulk proxy panel
         JPanel bulkPanel = new JPanel(new BorderLayout(5, 5));
         JTextArea bulkTextArea = new JTextArea(5, 30);
         bulkTextArea.setToolTipText("Enter one proxy per line in format socks5://host:port or socks4://host:port");
@@ -619,7 +591,6 @@ public class BurpProxyRotate implements BurpExtension {
                 }
             }
 
-            // Display errors for invalid lines
             if (!invalidLines.isEmpty()) {
                 StringBuilder errorMsg = new StringBuilder("Invalid proxy format in the following lines:\n");
                 for (int i = 0; i < Math.min(5, invalidLines.size()); i++) {
@@ -633,7 +604,6 @@ public class BurpProxyRotate implements BurpExtension {
                 JOptionPane.showMessageDialog(null, errorMsg.toString(), "Invalid Proxy Format", JOptionPane.ERROR_MESSAGE);
             }
 
-            // Add collected proxies in one go
             if (!proxiesToAdd.isEmpty()) {
                 proxyListLock.writeLock().lock();
                 try {
@@ -654,11 +624,9 @@ public class BurpProxyRotate implements BurpExtension {
             }
         });
         
-        // Add tabs
         proxyAddTabs.addTab("Single Proxy", singleAddPanel);
         proxyAddTabs.addTab("Bulk Add", bulkPanel);
         
-        // Button panel for the proxy list
         JPanel buttonPanel = new JPanel();
         
         JButton removeButton = new JButton("Remove Selected");
@@ -693,19 +661,16 @@ public class BurpProxyRotate implements BurpExtension {
         JPanel proxyAddPanel = new JPanel(new BorderLayout());
         proxyAddPanel.add(proxyAddTabs, BorderLayout.CENTER);
         
-        // Proxy panel with table and controls
         JPanel proxyTablePanel = new JPanel(new BorderLayout());
         proxyTablePanel.add(scrollPane, BorderLayout.CENTER);
         proxyTablePanel.add(buttonPanel, BorderLayout.SOUTH);
         
-        // Split panel for table and add controls
         JSplitPane proxySplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, 
                                                  proxyTablePanel, proxyAddPanel);
-        proxySplitPane.setResizeWeight(0.7); // Give more space to table
+        proxySplitPane.setResizeWeight(0.7); 
         
         proxyPanel.add(proxySplitPane, BorderLayout.CENTER);
         
-        // Log panel
         JPanel logPanel = new JPanel(new BorderLayout());
         logPanel.setBorder(BorderFactory.createTitledBorder("Log"));
         
@@ -719,13 +684,10 @@ public class BurpProxyRotate implements BurpExtension {
         
         logPanel.add(logScrollPane, BorderLayout.CENTER);
         
-        // Settings panel
         JPanel settingsPanel = createSettingsPanel();
         
-        // Create a tabbed pane for the main UI
         JTabbedPane tabbedPane = new JTabbedPane();
         
-        // Main tab
         JPanel mainTab = new JPanel(new BorderLayout());
         mainTab.add(controlPanel, BorderLayout.NORTH);
         mainTab.add(proxyPanel, BorderLayout.CENTER);
@@ -734,10 +696,8 @@ public class BurpProxyRotate implements BurpExtension {
         tabbedPane.addTab("Main", mainTab);
         tabbedPane.addTab("Settings", settingsPanel);
         
-        // Add tabbed pane to main panel
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         
-        // Setup stats update timer
         statsUpdateTimer = new javax.swing.Timer(1000, _ -> {
             if (socksProxyService != null && socksProxyService.isRunning()) {
                 statsLabel.setText(socksProxyService.getConnectionPoolStats());
@@ -747,14 +707,13 @@ public class BurpProxyRotate implements BurpExtension {
         });
         statsUpdateTimer.start();
         
-        // Update the proxy table
         updateProxyTable();
         
         return mainPanel;
     }
     
     /**
-     * Updates Burp Suite's SOCKS proxy settings to use our local proxy.
+     * Updates Burp Suite's SOCKS proxy settings to use our local proxy service
      */
     private void updateBurpSocksSettings(String host, int port, boolean useProxy) {
         try {
@@ -778,15 +737,13 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Finds an available port to use.
+     * Helper function to find an available port to use
      */
     private int findAvailablePort() {
-        // Try to use a port in the range 10000-65000 to avoid conflicts
         Random random = new Random();
-        for (int i = 0; i < 20; i++) { // Try up to 20 times
+        for (int i = 0; i < 20; i++) {
             int port = 10000 + random.nextInt(55000);
             try (ServerSocket socket = new ServerSocket(port)) {
-                // If we can bind to it, it's available
                 return socket.getLocalPort();
             } catch (IOException e) {
                 // Port is in use, try another one
@@ -797,10 +754,9 @@ public class BurpProxyRotate implements BurpExtension {
     }
 
     /**
-     * Enables the Burp Proxy Rotate service.
+     * Enables the Burp Proxy Rotate extension
      */
     private void enableProxyRotate() {
-        // Don't start if service is already running
         if (socksProxyService != null && socksProxyService.isRunning()) {
             logMessage("Burp Proxy Rotate service is already running");
             return;
@@ -817,7 +773,6 @@ public class BurpProxyRotate implements BurpExtension {
             return;
         }
         
-        // Always use a random port if configuredLocalPort is 0, otherwise use the configured port
         int portToUse;
         if (configuredLocalPort <= 0) {
             portToUse = findAvailablePort();
@@ -836,14 +791,12 @@ public class BurpProxyRotate implements BurpExtension {
         
         final int finalPortToUse = portToUse;
         
-        // Configure the service
         socksProxyService.setSettings(
                 bufferSize,
                 idleTimeoutSec,
                 maxConnectionsPerProxy
         );
         
-        // Configure bypass settings
         socksProxyService.setBypassCollaborator(bypassCollaborator);
         socksProxyService.clearBypassDomains();
         String domainsText = bypassDomainsTextArea.getText();
@@ -857,12 +810,10 @@ public class BurpProxyRotate implements BurpExtension {
             }
         }
         
-        // Configure proxy selection mode
         socksProxyService.setUseRandomProxySelection(useRandomProxySelection);
         
         // Start the service
         socksProxyService.start(finalPortToUse, 
-                // Success callback
                 () -> {
                     SwingUtilities.invokeLater(() -> {
                         // Update Burp settings
@@ -893,7 +844,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Disables the proxy rotation service.
+     * Disables the proxy rotation extension
      */
     private void disableProxyRotate() {
         if (socksProxyService == null || !socksProxyService.isRunning()) {
@@ -904,13 +855,10 @@ public class BurpProxyRotate implements BurpExtension {
         try {
             logMessage("Stopping Burp Proxy Rotate service...");
             
-            // Stop the service
             socksProxyService.stop();
             
-            // Update Burp settings
             updateBurpSocksSettings("", 0, false);
             
-            // Update UI
             statusLabel.setText("Status: Stopped");
             enableButton.setEnabled(true);
             disableButton.setEnabled(false);
@@ -927,7 +875,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Updates the server control buttons based on service state.
+     * Updates the server control buttons based on service state
      */
     private void updateServerButtons() {
         SwingUtilities.invokeLater(() -> {
@@ -940,7 +888,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
 
     /**
-     * Performs shutdown operations.
+     * Shut down
      */
     private void shutdown() {
         logMessage("Extension unloading. Stopping proxy service...");
@@ -957,13 +905,12 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Adds a proxy to the list.
+     * Add a proxy to the list
      */
     private void addProxy(ProxyEntry proxy) {
         boolean added = false;
         proxyListLock.writeLock().lock();
         try {
-            // Prevent duplicates
             boolean exists = proxyList.stream().anyMatch(p -> 
                 p.getHost().equalsIgnoreCase(proxy.getHost()) && p.getPort() == proxy.getPort());
             if (!exists) {
@@ -984,7 +931,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Removes a proxy from the list.
+     * Remove a proxy from the list
      */
     private void removeProxy(int index) {
         ProxyEntry removed = null;
@@ -1005,7 +952,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Clears all proxies from the list.
+     * Clear all proxies
      */
     private void clearAllProxies() {
         int count = 0;
@@ -1025,7 +972,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Updates the proxy table model.
+     * Update the proxy table
      */
     private void updateProxyTable() {
         if (proxyTableModel != null) {
@@ -1037,14 +984,13 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Logs a message to both the UI and Burp's output.
+     * Log a message to both the UI and Burp's output
      */
     private void logMessage(String message) {
         if (api != null && api.logging() != null && loggingEnabled) {
             api.logging().logToOutput(message);
         }
         
-        // Always log to the UI text area
         if (logTextArea != null) {
             SwingUtilities.invokeLater(() -> {
                 logTextArea.append(message + "\n");
@@ -1054,7 +1000,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Table model for displaying proxies.
+     * Table for displaying proxies
      */
     private class ProxyTableModel extends AbstractTableModel {
         private final String[] columnNames = {"Protocol", "Host", "Port", "Auth", "Status"};
@@ -1115,7 +1061,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Sets up the table renderer.
+     * Table renderer
      */
     private void setupTableRenderer(JTable proxyTable) {
         proxyTable.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
@@ -1142,12 +1088,10 @@ public class BurpProxyRotate implements BurpExtension {
                     c.setForeground(Color.RED);
                 }
                 
-                // Only make "Yes" in the Auth column bold
                 if (entry != null && column == 3 && "Yes".equals(value)) {
                     Font boldFont = c.getFont().deriveFont(Font.BOLD);
                     c.setFont(boldFont);
                 } else {
-                    // Reset to regular font for other cells
                     Font regularFont = c.getFont().deriveFont(Font.PLAIN);
                     c.setFont(regularFont);
                 }
@@ -1165,7 +1109,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Validates all proxies in the list.
+     * Validate all proxies in the list
      */
     private void validateAllProxies() {
         List<ProxyEntry> proxiesToValidate;
@@ -1241,7 +1185,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Validates a single proxy.
+     * Validate a single proxy
      */
     private boolean validateProxy(ProxyEntry proxy, int maxAttempts) {
         logMessage("Validating proxy: " + proxy.getProtocol() + "://" + 
@@ -1406,9 +1350,8 @@ public class BurpProxyRotate implements BurpExtension {
                         byte[] response = new byte[8];
                         int bytesRead = in.read(response);
                         
-                        // We just want to verify we get a SOCKS4 response, not that it succeeds
+                        // verify we get a SOCKS4 response
                         if (bytesRead == 8 && response[0] == 0x00) {
-                            // This is a SOCKS4 proxy - even if it returns an error code, we know it speaks SOCKS4
                             logMessage("SOCKS4 proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
                             success = true;
                             finalErrorMessage = "";
@@ -1432,7 +1375,7 @@ public class BurpProxyRotate implements BurpExtension {
                 logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
             } finally {
                 if (socket != null) {
-                    try { socket.close(); } catch (IOException e) { /* ignore */ }
+                    try { socket.close(); } catch (IOException e) { /* pass */ }
                 }
             }
             
@@ -1455,14 +1398,14 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Parse a proxy URL string into a ProxyEntry object.
-     * Accepts formats like:
+     * Parse a proxy URL string into a ProxyEntry object
+     * Formats
      * - socks5://host:port
      * - socks4://host:port
      * - http://host:port
-     * - socks5://username:password@host:port  (for authenticated proxies)
-     * - http://username:password@host:port (for authenticated http proxies)
-     * - host:port (defaults to socks5)
+     * - socks5://username:password@host:port  
+     * - http://username:password@host:port
+     * - host:port (defaults to socks5) - might remove this
      * 
      * @param proxyUrl the proxy URL string
      * @return a ProxyEntry object or null if the format is invalid
@@ -1494,7 +1437,7 @@ public class BurpProxyRotate implements BurpExtension {
                 }
             }
         } else {
-            // Try the legacy format host:port
+            // original format host:port .. might remove this
             java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(PROXY_HOST_PORT_REGEX);
             java.util.regex.Matcher matcher = pattern.matcher(proxyUrl);
             
@@ -1502,9 +1445,9 @@ public class BurpProxyRotate implements BurpExtension {
                 String host = matcher.group(1);
                 int port = Integer.parseInt(matcher.group(2));
                 
-                // Validate port range
+                // Validate port
                 if (port > 0 && port <= 65535) {
-                    return ProxyEntry.createWithProtocol(host, port, "socks5"); // Default to socks5
+                    return ProxyEntry.createWithProtocol(host, port, "socks5");
                 }
             }
         }
@@ -1513,7 +1456,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
 
     /**
-     * Notify that a proxy has failed.
+     * Notify that a proxy has failed
      */
     public void notifyProxyFailure(String host, int port, String errorMessage) {
         SwingUtilities.invokeLater(() -> {
@@ -1535,7 +1478,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Notify that a proxy has been reactivated.
+     * Notify that a proxy has been reactivated (is active again)
      */
     public void notifyProxyReactivated(String host, int port) {
         SwingUtilities.invokeLater(() -> {
@@ -1557,7 +1500,7 @@ public class BurpProxyRotate implements BurpExtension {
     }
 
     /**
-     * Creates the settings panel with all configuration options.
+     * Settings panel
      */
     private JPanel createSettingsPanel() {
         JPanel settingsPanel = new JPanel(new BorderLayout());
@@ -1570,7 +1513,6 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.insets = new Insets(5, 5, 5, 5);
         gbc.fill = GridBagConstraints.HORIZONTAL;
         
-        // Buffer Size
         gbc.gridx = 0;
         gbc.gridy = 0;
         controlsPanel.add(new JLabel("Buffer Size (bytes):"), gbc);
@@ -1584,8 +1526,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         gbc.gridx = 1;
         controlsPanel.add(bufferSizeSpinner, gbc);
-        
-        // Idle Timeout
+
         gbc.gridx = 0;
         gbc.gridy = 1;
         controlsPanel.add(new JLabel("Idle Timeout (sec):"), gbc);
@@ -1600,7 +1541,6 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(idleTimeoutSpinner, gbc);
         
-        // Max Connections Per Proxy
         gbc.gridx = 0;
         gbc.gridy = 2;
         controlsPanel.add(new JLabel("Max Connections Per Proxy:"), gbc);
@@ -1615,7 +1555,6 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(maxConnectionsPerProxySpinner, gbc);
         
-        // Enable Logging
         gbc.gridx = 0;
         gbc.gridy = 3;
         controlsPanel.add(new JLabel("Enable Logging:"), gbc);
@@ -1634,7 +1573,6 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(enableLoggingCheckbox, gbc);
         
-        // Bypass Collaborator
         gbc.gridx = 0;
         gbc.gridy = 4;
         controlsPanel.add(new JLabel("Bypass Collaborator:"), gbc);
@@ -1651,7 +1589,6 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridx = 1;
         controlsPanel.add(bypassCollaboratorCheckbox, gbc);
         
-        // Proxy Selection Mode
         gbc.gridx = 0;
         gbc.gridy = 5;
         controlsPanel.add(new JLabel("Proxy Selection Mode:"), gbc);
@@ -1685,10 +1622,8 @@ public class BurpProxyRotate implements BurpExtension {
         bypassPanel.add(bypassScrollPane, BorderLayout.CENTER);
         bypassPanel.add(updateDomainsButton, BorderLayout.SOUTH);
         
-        // Load saved domains
         loadBypassDomains();
         
-        // Reset Default Settings Button
         gbc.gridx = 0;
         gbc.gridy = 6;
         gbc.gridwidth = 2;
@@ -1708,19 +1643,16 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Resets all settings to their default values.
-     * Settings can be selectively preserved by setting the preserveXXX parameters to true.
+     * Reset to default settings
      */
     private void resetDefaultSettings() {
-        // Reset to defaults
         bufferSize = DEFAULT_BUFFER_SIZE;
         idleTimeoutSec = DEFAULT_IDLE_TIMEOUT;
         maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
-        loggingEnabled = DEFAULT_LOGGING_ENABLED; // Now we reset logging too
+        loggingEnabled = DEFAULT_LOGGING_ENABLED;
         bypassCollaborator = DEFAULT_BYPASS_COLLABORATOR;
         useRandomProxySelection = DEFAULT_RANDOM_PROXY_SELECTION;
         
-        // Update UI
         bufferSizeSpinner.setValue(bufferSize);
         idleTimeoutSpinner.setValue(idleTimeoutSec);
         maxConnectionsPerProxySpinner.setValue(maxConnectionsPerProxy);
@@ -1728,7 +1660,6 @@ public class BurpProxyRotate implements BurpExtension {
         bypassCollaboratorCheckbox.setSelected(bypassCollaborator);
         proxySelectionModeComboBox.setSelectedItem(useRandomProxySelection ? "Random" : "Round-Robin");
         
-        // Update service with new settings if it exists
         if (socksProxyService != null) {
             socksProxyService.resetToDefaults();
         }
@@ -1737,7 +1668,6 @@ public class BurpProxyRotate implements BurpExtension {
         
         logMessage("All settings reset to defaults");
         
-        // Show confirmation dialog
         SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(null, 
             "Settings have been reset to default values:\n\n" +
             "• Buffer Size: " + bufferSize + " bytes\n" +
