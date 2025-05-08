@@ -98,7 +98,7 @@ public class BurpProxyRotate implements BurpExtension {
     @Override
     public void initialize(MontoyaApi api) {
         this.api = api;
-        api.extension().setName("Burp SOCKS Rotate");
+        api.extension().setName("Proxy Rotate");
         
         // Initialize proxy list
         proxyList = new ArrayList<>();
@@ -119,14 +119,14 @@ public class BurpProxyRotate implements BurpExtension {
         // Create and register the UI
         SwingUtilities.invokeLater(() -> {
             JComponent panel = createUserInterface();
-            api.userInterface().registerSuiteTab("SOCKS Rotate", panel);
+            api.userInterface().registerSuiteTab("Proxy Rotate", panel);
             updateServerButtons();
         });
         
         // Add shutdown hook
         api.extension().registerUnloadingHandler(this::shutdown);
         
-        logMessage("Burp SOCKS Rotate extension loaded successfully");
+        logMessage("Burp Proxy Rotate extension loaded successfully");
     }
     
     /**
@@ -415,10 +415,10 @@ public class BurpProxyRotate implements BurpExtension {
         
         // Enable/Disable buttons
         enableButton = new JButton("Start Proxy");
-        enableButton.addActionListener(_ -> enableSocksRotate());
+        enableButton.addActionListener(_ -> enableProxyRotate());
         
         disableButton = new JButton("Stop Proxy");
-        disableButton.addActionListener(_ -> disableSocksRotate());
+        disableButton.addActionListener(_ -> disableProxyRotate());
         disableButton.setEnabled(false);
         
         gbc.gridx = 0;
@@ -769,12 +769,12 @@ public class BurpProxyRotate implements BurpExtension {
     }
 
     /**
-     * Enables the SOCKS rotation service.
+     * Enables the Burp Proxy Rotate service.
      */
-    private void enableSocksRotate() {
+    private void enableProxyRotate() {
         // Don't start if service is already running
-        if (socksProxyService != null && socksProxyService.isRunning()) {
-            logMessage("SOCKS Rotate service is already running");
+        if (proxyRotateService != null && proxyRotateService.isRunning()) {
+            logMessage("Burp Proxy Rotate service is already running");
             return;
         }
         
@@ -785,7 +785,7 @@ public class BurpProxyRotate implements BurpExtension {
                     "No Proxies Available",
                     JOptionPane.WARNING_MESSAGE
             );
-            logMessage("Cannot start SOCKS Rotate service: No proxies available");
+            logMessage("Cannot start Burp Proxy Rotate service: No proxies available");
             return;
         }
         
@@ -866,20 +866,20 @@ public class BurpProxyRotate implements BurpExtension {
     /**
      * Disables the SOCKS rotation service.
      */
-    private void disableSocksRotate() {
-        if (socksProxyService == null || !socksProxyService.isRunning()) {
-            logMessage("SOCKS Rotate service is not running");
+    private void disableProxyRotate() {
+        if (proxyRotateService == null || !proxyRotateService.isRunning()) {
+            logMessage("Burp Proxy Rotate service is not running");
             return;
         }
         
         try {
-            logMessage("Stopping SOCKS Rotate service...");
+            logMessage("Stopping Burp Proxy Rotate service...");
             
             // Stop the service
-            socksProxyService.stop();
+            proxyRotateService.stop();
             
             // Update Burp settings
-            updateBurpSocksSettings("", 0, false);
+            updateBurpProxySettings("", 0, false);
             
             // Update UI
             statusLabel.setText("Status: Stopped");
