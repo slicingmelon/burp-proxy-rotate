@@ -58,12 +58,12 @@ public class BurpProxyRotate implements BurpExtension {
     private int configuredLocalPort = 0;
     
     // Settings with defaults
-    private int bufferSize = 8092; // 8KB
-    private int idleTimeoutSec = 60; // Idle timeout in seconds
-    private int maxConnectionsPerProxy = 50;
-    private boolean loggingEnabled = true;
-    private boolean bypassCollaborator = true; // Default to bypass Collaborator
-    private boolean useRandomProxySelection = true; // Default to random proxy selection
+    private int bufferSize = DEFAULT_BUFFER_SIZE;
+    private int idleTimeoutSec = DEFAULT_IDLE_TIMEOUT;
+    private int maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
+    private boolean loggingEnabled = DEFAULT_LOGGING_ENABLED;
+    private boolean bypassCollaborator = DEFAULT_BYPASS_COLLABORATOR;
+    private boolean useRandomProxySelection = DEFAULT_RANDOM_PROXY_SELECTION;
     
     // UI components for settings
     private JSpinner bufferSizeSpinner;
@@ -88,10 +88,13 @@ public class BurpProxyRotate implements BurpExtension {
     private javax.swing.Timer statsUpdateTimer;
     private JLabel statsLabel;
 
-    // Add default constants
+    // Add default constants for ALL settings
     private static final int DEFAULT_BUFFER_SIZE = 8092;
     private static final int DEFAULT_IDLE_TIMEOUT = 60;
     private static final int DEFAULT_MAX_CONNECTIONS_PER_PROXY = 50;
+    private static final boolean DEFAULT_LOGGING_ENABLED = true;
+    private static final boolean DEFAULT_BYPASS_COLLABORATOR = true;
+    private static final boolean DEFAULT_RANDOM_PROXY_SELECTION = true;
 
     @Override
     public void initialize(MontoyaApi api) {
@@ -1705,39 +1708,44 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Resets all settings to their default values except for logging setting.
+     * Resets all settings to their default values.
+     * Settings can be selectively preserved by setting the preserveXXX parameters to true.
      */
     private void resetDefaultSettings() {
-        // Store current logging state
-        boolean currentLoggingState = loggingEnabled;
-        
         // Reset to defaults
         bufferSize = DEFAULT_BUFFER_SIZE;
         idleTimeoutSec = DEFAULT_IDLE_TIMEOUT;
         maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
-        bypassCollaborator = true; // Default to bypass Collaborator
-        useRandomProxySelection = true; // Default to random proxy selection
-        
-        // Restore logging state
-        loggingEnabled = currentLoggingState;
+        loggingEnabled = DEFAULT_LOGGING_ENABLED; // Now we reset logging too
+        bypassCollaborator = DEFAULT_BYPASS_COLLABORATOR;
+        useRandomProxySelection = DEFAULT_RANDOM_PROXY_SELECTION;
         
         // Update UI
         bufferSizeSpinner.setValue(bufferSize);
         idleTimeoutSpinner.setValue(idleTimeoutSec);
         maxConnectionsPerProxySpinner.setValue(maxConnectionsPerProxy);
+        enableLoggingCheckbox.setSelected(loggingEnabled);
+        bypassCollaboratorCheckbox.setSelected(bypassCollaborator);
+        proxySelectionModeComboBox.setSelectedItem(useRandomProxySelection ? "Random" : "Round-Robin");
+        
+        // Update service with new settings if it exists
+        if (socksProxyService != null) {
+            socksProxyService.resetToDefaults();
+        }
         
         saveSettings();
         
-        logMessage("Settings reset to defaults (except logging)");
+        logMessage("All settings reset to defaults");
         
         // Show confirmation dialog
         SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(null, 
             "Settings have been reset to default values:\n\n" +
             "• Buffer Size: " + bufferSize + " bytes\n" +
             "• Idle Timeout: " + idleTimeoutSec + " seconds\n" +
-            "• Max Connections Per Proxy: " + maxConnectionsPerProxy + "\n\n" +
-            "Logging setting was preserved: " + (loggingEnabled ? "Enabled" : "Disabled") + "\n" +
-            "Bypass Collaborator setting was preserved: " + (bypassCollaborator ? "Enabled" : "Disabled"),
+            "• Max Connections Per Proxy: " + maxConnectionsPerProxy + "\n" +
+            "• Logging: " + (loggingEnabled ? "Enabled" : "Disabled") + "\n" +
+            "• Bypass Collaborator: " + (bypassCollaborator ? "Enabled" : "Disabled") + "\n" +
+            "• Proxy Selection: " + (useRandomProxySelection ? "Random" : "Round-Robin"),
             "Settings Reset", 
             JOptionPane.INFORMATION_MESSAGE));
     }

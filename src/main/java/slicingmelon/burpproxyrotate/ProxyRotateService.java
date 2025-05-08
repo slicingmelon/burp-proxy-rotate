@@ -38,17 +38,25 @@ import java.nio.BufferOverflowException;
  * The core service that randomly rotates each HTTP request through a different proxy from a provided list.
  */
 public class ProxyRotateService {
-    // Default settings
-    private int bufferSize = 8092; // 8KB
-    private int idleTimeoutSec = 60; // Idle timeout in seconds
-    private int maxConnectionsPerProxy = 50; // Maximum connections per proxy
+    // Default settings - use same values as in BurpProxyRotate
+    private static final int DEFAULT_BUFFER_SIZE = 8092; // 8KB
+    private static final int DEFAULT_IDLE_TIMEOUT = 60; // Idle timeout in seconds
+    private static final int DEFAULT_MAX_CONNECTIONS_PER_PROXY = 50;
+    private static final boolean DEFAULT_LOGGING_ENABLED = true;
+    private static final boolean DEFAULT_BYPASS_COLLABORATOR = true;
+    private static final boolean DEFAULT_RANDOM_PROXY_SELECTION = true;
+    
+    // Instance settings
+    private int bufferSize = DEFAULT_BUFFER_SIZE;
+    private int idleTimeoutSec = DEFAULT_IDLE_TIMEOUT;
+    private int maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
     
     // Bypass configuration for Burp Collaborator domains
-    private boolean bypassCollaborator = true;
+    private boolean bypassCollaborator = DEFAULT_BYPASS_COLLABORATOR;
     private final List<String> bypassDomains = new ArrayList<>();
     
     // Proxy selection mode
-    private boolean useRandomProxySelection = true; // Default to random proxy selection
+    private boolean useRandomProxySelection = DEFAULT_RANDOM_PROXY_SELECTION;
 
     private final Logging logging;
     private final List<ProxyEntry> proxyList;
@@ -56,7 +64,7 @@ public class ProxyRotateService {
     private final Random random = new Random();
     
     // Logging configuration
-    private boolean loggingEnabled = true;
+    private boolean loggingEnabled = DEFAULT_LOGGING_ENABLED;
     
     // NIO components
     private Selector selector;
@@ -175,13 +183,39 @@ public class ProxyRotateService {
      * Sets the service settings.
      */
     public void setSettings(int bufferSize, int idleTimeoutSec, int maxConnectionsPerProxy) {
-        this.bufferSize = bufferSize;
-        this.idleTimeoutSec = idleTimeoutSec;
-        this.maxConnectionsPerProxy = maxConnectionsPerProxy;
+        boolean changed = false;
         
-        logInfo("Settings updated: bufferSize=" + bufferSize + 
-                ", idleTimeoutSec=" + idleTimeoutSec + 
-                ", maxConnectionsPerProxy=" + maxConnectionsPerProxy);
+        if (this.bufferSize != bufferSize) {
+            this.bufferSize = bufferSize;
+            changed = true;
+        }
+        
+        if (this.idleTimeoutSec != idleTimeoutSec) {
+            this.idleTimeoutSec = idleTimeoutSec;
+            changed = true;
+        }
+        
+        if (this.maxConnectionsPerProxy != maxConnectionsPerProxy) {
+            this.maxConnectionsPerProxy = maxConnectionsPerProxy;
+            changed = true;
+        }
+        
+        if (changed) {
+            logInfo("Settings updated: bufferSize=" + bufferSize + 
+                    ", idleTimeoutSec=" + idleTimeoutSec + 
+                    ", maxConnectionsPerProxy=" + maxConnectionsPerProxy);
+        }
+    }
+
+    /**
+     * Resets settings to default values.
+     */
+    public void resetToDefaults() {
+        setSettings(DEFAULT_BUFFER_SIZE, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS_PER_PROXY);
+        setLoggingEnabled(DEFAULT_LOGGING_ENABLED);
+        setBypassCollaborator(DEFAULT_BYPASS_COLLABORATOR);
+        setUseRandomProxySelection(DEFAULT_RANDOM_PROXY_SELECTION);
+        logInfo("All settings reset to defaults");
     }
 
     /**
@@ -625,61 +659,62 @@ public class ProxyRotateService {
                     // Register for reading
                     proxyChannel.register(selector, SelectionKey.OP_READ);
                     
+                    logInfo("Direct connection established immediately to " + state.targetHost + ":" + state.targetPort);
                     return;
-                }
-                
-                // Check if this is an HTTP proxy connection
-                if (state.selectedProxy != null && state.selectedProxy.isHttp()) {
-                    // Send HTTP CONNECT request
-                    logInfo("HTTP proxy connection established to " + state.selectedProxy.getHost() + ":" + state.selectedProxy.getPort());
-                    sendHttpConnectRequest(proxyChannel, state);
-                    
-                    // Register for reading the HTTP response
-                    proxyChannel.register(selector, SelectionKey.OP_READ);
-                    
-                    // Update state
-                    state.stage = ConnectionStage.HTTP_CONNECT;
-                    return;
-                }
-                
-                // Regular proxy connection logic continues here for SOCKS proxies
-                // Register for reading from the proxy
-                proxyChannel.register(selector, SelectionKey.OP_READ);
-                
-                // Setup the SOCKS handshake with the proxy
-                if (state.selectedProxy.getProtocolVersion() == 5) {
-                    // SOCKS5 proxy handshake
-                    ByteBuffer handshake;
-                    
-                    if (state.selectedProxy.isAuthenticated()) {
-                        // We support both no-auth (0x00) and username/password (0x02)
-                        handshake = ByteBuffer.allocate(4);
-                        handshake.put((byte) 0x05); // SOCKS version
-                        handshake.put((byte) 0x02); // 2 auth methods
-                        handshake.put((byte) 0x00); // No auth
-                        handshake.put((byte) 0x02); // Username/password auth
-                    } else {
-                        // Only support no-auth
-                        handshake = ByteBuffer.allocate(3);
-                        handshake.put((byte) 0x05); // SOCKS version
-                        handshake.put((byte) 0x01); // 1 auth method
-                        handshake.put((byte) 0x00); // No auth
+                } else {
+                    // Check if this is an HTTP proxy connection
+                    if (state.selectedProxy != null && state.selectedProxy.isHttp()) {
+                        // Send HTTP CONNECT request
+                        logInfo("HTTP proxy connection established to " + state.selectedProxy.getHost() + ":" + state.selectedProxy.getPort());
+                        sendHttpConnectRequest(proxyChannel, state);
+                        
+                        // Register for reading the HTTP response
+                        proxyChannel.register(selector, SelectionKey.OP_READ);
+                        
+                        // Update state
+                        state.stage = ConnectionStage.HTTP_CONNECT;
+                        return;
                     }
                     
-                    handshake.flip();
-                    proxyChannel.write(handshake);
-                    state.stage = ConnectionStage.SOCKS5_AUTH;
-                } else {
-                    // SOCKS4 proxy handshake directly sending the connect
-                    ByteBuffer request = createSocks4ConnectRequest(state.targetHost, state.targetPort);
-                    proxyChannel.write(request);
-                    state.stage = ConnectionStage.SOCKS4_CONNECT;
+                    // Regular proxy connection logic continues here for SOCKS proxies
+                    // Register for reading from the proxy
+                    proxyChannel.register(selector, SelectionKey.OP_READ);
+                    
+                    // Setup the SOCKS handshake with the proxy
+                    if (state.selectedProxy.getProtocolVersion() == 5) {
+                        // SOCKS5 proxy handshake
+                        ByteBuffer handshake;
+                        
+                        if (state.selectedProxy.isAuthenticated()) {
+                            // We support both no-auth (0x00) and username/password (0x02)
+                            handshake = ByteBuffer.allocate(4);
+                            handshake.put((byte) 0x05); // SOCKS version
+                            handshake.put((byte) 0x02); // 2 auth methods
+                            handshake.put((byte) 0x00); // No auth
+                            handshake.put((byte) 0x02); // Username/password auth
+                        } else {
+                            // Only support no-auth
+                            handshake = ByteBuffer.allocate(3);
+                            handshake.put((byte) 0x05); // SOCKS version
+                            handshake.put((byte) 0x01); // 1 auth method
+                            handshake.put((byte) 0x00); // No auth
+                        }
+                        
+                        handshake.flip();
+                        proxyChannel.write(handshake);
+                        state.stage = ConnectionStage.SOCKS5_AUTH;
+                    } else {
+                        // SOCKS4 proxy handshake directly sending the connect
+                        ByteBuffer request = createSocks4ConnectRequest(state.targetHost, state.targetPort);
+                        proxyChannel.write(request);
+                        state.stage = ConnectionStage.SOCKS4_CONNECT;
+                    }
+                    
+                    logInfo("Proxy connection established to " + 
+                           state.selectedProxy.getProtocol() + "://" + 
+                           state.selectedProxy.getHost() + ":" + 
+                           state.selectedProxy.getPort());
                 }
-                
-                logInfo("Proxy connection established to " + 
-                       state.selectedProxy.getProtocol() + "://" + 
-                       state.selectedProxy.getHost() + ":" + 
-                       state.selectedProxy.getPort());
             }
         } catch (IOException e) {
             logError("Connection failed: " + e.getMessage());
@@ -1488,6 +1523,7 @@ public class ProxyRotateService {
                     directChannel.register(selector, SelectionKey.OP_READ);
                     
                     logInfo("Direct connection established immediately to " + state.targetHost + ":" + state.targetPort);
+                    return;
                 } else {
                     // Register for connect completion
                     directChannel.register(selector, SelectionKey.OP_CONNECT);
@@ -2200,8 +2236,10 @@ public class ProxyRotateService {
      * Sets whether logging is enabled.
      */
     public void setLoggingEnabled(boolean enabled) {
-        this.loggingEnabled = enabled;
-        logInfo("Logging " + (enabled ? "enabled" : "disabled"));
+        if (this.loggingEnabled != enabled) {
+            this.loggingEnabled = enabled;
+            logInfo("Logging " + (enabled ? "enabled" : "disabled"));
+        }
     }
 
     /**
@@ -2270,8 +2308,10 @@ public class ProxyRotateService {
      * Enables or disables bypassing proxies for Burp Collaborator domains.
      */
     public void setBypassCollaborator(boolean bypass) {
-        this.bypassCollaborator = bypass;
-        logInfo("Bypass for Collaborator domains " + (bypass ? "enabled" : "disabled"));
+        if (this.bypassCollaborator != bypass) {
+            this.bypassCollaborator = bypass;
+            logInfo("Bypass for Collaborator domains " + (bypass ? "enabled" : "disabled"));
+        }
     }
     
     /**
@@ -2577,7 +2617,9 @@ public class ProxyRotateService {
      * Sets whether to use random proxy selection instead of round-robin.
      */
     public void setUseRandomProxySelection(boolean useRandom) {
-        this.useRandomProxySelection = useRandom;
-        logInfo("Proxy selection mode set to: " + (useRandom ? "Random" : "Round-Robin"));
+        if (this.useRandomProxySelection != useRandom) {
+            this.useRandomProxySelection = useRandom;
+            logInfo("Proxy selection mode set to: " + (useRandom ? "Random" : "Round-Robin"));
+        }
     }
 } 
