@@ -122,8 +122,7 @@ The extension provides a user-friendly interface with two main tabs:
 #### Settings
 ![Settings Tab](images/burp-proxy-rotate-settings.png)
 
-## Code Organization
+## Demo
 
--   **`BurpProxyRotate.java`**: Handles the Burp Extension lifecycle, user interface (Swing), settings persistence, and acts as the controller coordinating with the `ProxyRotateService`.
--   **`ProxyRotateService.java`**: The core non-blocking proxying engine using Java NIO. Manages all network connections, protocol handshakes (SOCKS, HTTP CONNECT), and data relaying.
--   **`ProxyEntry.java`**: A simple data class representing an individual proxy configuration (host, port, protocol, credentials, status).
+![Demo](images/burp-proxy-rorate-demo.gif)
+
