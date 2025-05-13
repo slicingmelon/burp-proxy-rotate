@@ -2,6 +2,11 @@
 
 Burp Proxy Rotate is a Burp Suite extension that routes each HTTP request through a random proxy from a configurable list. Each new connection from Burp is assigned a proxy, enabling IP rotation for better anonymity, WAF evasion, geo-targeted testing, and other advanced use cases. This ensures requests exit through different IPs and can help simulate distributed attack patterns during security assessments.
 
+### Author 
+
+Petru Surugiu <[@pedro_infosec](https://x.com/pedro_infosec)>
+
+
 ## Key Features
 
 -   **Advanced Proxy Rotation:** Leverages Java NIO for non-blocking, event-driven proxying, assigning a different proxy node on a per-connection basis.
