@@ -103,6 +103,9 @@ public class BurpProxyRotate implements BurpExtension {
         
         proxyList = new ArrayList<>();
         
+        // Reset/disable Burp's SOCKS proxy settings on startup to ensure clean state
+        resetBurpSocksSettings();
+        
         loadSavedProxies();
         
         socksProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
@@ -731,6 +734,29 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
+     * Reset/disable Burp Suite's SOCKS proxy settings to ensure clean state
+     */
+    private void resetBurpSocksSettings() {
+        try {
+            // Disable SOCKS proxy and reset to default values
+            String disableProxyJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"use_proxy\":false}}}}";
+            String resetHostJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"host\":\"\"}}}}";
+            String resetPortJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"port\":1080}}}}";
+            String resetDnsJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"dns_over_socks\":false}}}}";
+            
+            // Import settings into Burp
+            api.burpSuite().importUserOptionsFromJson(disableProxyJson);
+            api.burpSuite().importUserOptionsFromJson(resetHostJson);
+            api.burpSuite().importUserOptionsFromJson(resetPortJson);
+            api.burpSuite().importUserOptionsFromJson(resetDnsJson);
+            
+            logMessage("Burp SOCKS proxy settings reset to default (disabled)");
+        } catch (Exception e) {
+            logMessage("Error resetting Burp SOCKS settings: " + e.getMessage());
+        }
+    }
+    
+    /**
      * Helper function to find an available port to use
      */
     private int findAvailablePort() {
@@ -878,30 +904,46 @@ public class BurpProxyRotate implements BurpExtension {
      * Disable the extension
      */
     private void disableProxyRotate() {
-        if (socksProxyService == null || !socksProxyService.isRunning()) {
-            logMessage("Burp Proxy Rotate service is not running");
-            return;
-        }
-        
         try {
             logMessage("Stopping Burp Proxy Rotate service...");
             
-            socksProxyService.stop();
+            if (socksProxyService != null && socksProxyService.isRunning()) {
+                socksProxyService.stop();
+                logMessage("SOCKS Rotate service stopped");
+            } else {
+                logMessage("Burp Proxy Rotate service was not running");
+            }
             
-            updateBurpSocksSettings("", 0, false);
+            // Always reset Burp's SOCKS proxy settings, regardless of service state
+            resetBurpSocksSettings();
             
-            statusLabel.setText("Status: Stopped");
-            enableButton.setEnabled(true);
-            disableButton.setEnabled(false);
-            
-            logMessage("SOCKS Rotate service stopped");
+            // Update UI if available
+            if (statusLabel != null) {
+                statusLabel.setText("Status: Stopped");
+            }
+            if (enableButton != null) {
+                enableButton.setEnabled(true);
+            }
+            if (disableButton != null) {
+                disableButton.setEnabled(false);
+            }
             
         } catch (Exception ex) {
             logMessage("Error stopping SOCKS Rotate service: " + ex.getMessage());
-            JOptionPane.showMessageDialog(null,
-                    "An error occurred while stopping the service: " + ex.getMessage(),
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE);
+            
+            // Still try to reset the SOCKS proxy settings even if there was an error
+            try {
+                resetBurpSocksSettings();
+            } catch (Exception resetEx) {
+                logMessage("Error resetting SOCKS proxy settings: " + resetEx.getMessage());
+            }
+            
+            if (enableButton != null && disableButton != null) {
+                JOptionPane.showMessageDialog(null,
+                        "An error occurred while stopping the service: " + ex.getMessage(),
+                        "Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
         }
     }
     
@@ -927,6 +969,10 @@ public class BurpProxyRotate implements BurpExtension {
         if (socksProxyService != null) {
             disableProxyRotate();
         }
+        
+        // Reset Burp's SOCKS proxy settings to ensure clean state
+        resetBurpSocksSettings();
+        
         saveProxies();
         logMessage("Burp SOCKS Rotate extension shut down.");
 
