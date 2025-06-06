@@ -1978,7 +1978,7 @@ public class ProxyRotateService {
         
         try {
             // Get the channel before canceling the key
-            Object attachment = key.attachment();
+            //Object attachment = key.attachment();
             java.nio.channels.Channel channel = key.channel();
             
             // Cancel the key first
