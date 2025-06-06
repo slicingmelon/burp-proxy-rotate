@@ -1068,7 +1068,7 @@ public class ProxyRotateService {
                     logInfo("Forwarding " + totalBytesToWrite + " bytes from direct connection to client");
                     
                     // Attempt to write all data at once
-                    int written = clientChannel.write(buffer);
+                   clientChannel.write(buffer);
                     
                     if (buffer.hasRemaining()) {
                         logInfo("Couldn't write all data at once to client, remaining: " + buffer.remaining());
