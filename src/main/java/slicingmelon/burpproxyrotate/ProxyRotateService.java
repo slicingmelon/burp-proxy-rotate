@@ -157,6 +157,7 @@ public class ProxyRotateService {
 
     // Track the last used proxy to enforce rotation
     private volatile int lastProxyIndex = -1;
+    private volatile ProxyEntry lastUsedProxy = null;
     private final Object proxyRotationLock = new Object();
 
     /**
@@ -499,6 +500,7 @@ public class ProxyRotateService {
         try {
             // Reset the proxy rotation index
             lastProxyIndex = -1;
+            lastUsedProxy = null;
             
             // Close the selector to interrupt the selector thread
             if (selector != null) {
@@ -2159,8 +2161,35 @@ public class ProxyRotateService {
         } else {
             // Round-robin mode - get the next proxy in sequence
             synchronized (proxyRotationLock) {
-                lastProxyIndex = (lastProxyIndex + 1) % activeProxies.size();
-                selectedProxy = activeProxies.get(lastProxyIndex);
+                if (lastUsedProxy == null) {
+                    // First time, start with the first proxy
+                    selectedProxy = activeProxies.get(0);
+                    lastProxyIndex = 0;
+                } else {
+                    // Find the last used proxy in the current active list
+                    int lastUsedIndex = -1;
+                    for (int i = 0; i < activeProxies.size(); i++) {
+                        ProxyEntry proxy = activeProxies.get(i);
+                        if (proxy.getHost().equals(lastUsedProxy.getHost()) && 
+                            proxy.getPort() == lastUsedProxy.getPort() &&
+                            proxy.getProtocol().equals(lastUsedProxy.getProtocol())) {
+                            lastUsedIndex = i;
+                            break;
+                        }
+                    }
+                    
+                    if (lastUsedIndex == -1) {
+                        // Last used proxy is no longer active, start from beginning
+                        selectedProxy = activeProxies.get(0);
+                        lastProxyIndex = 0;
+                    } else {
+                        // Select the next proxy in the list
+                        lastProxyIndex = (lastUsedIndex + 1) % activeProxies.size();
+                        selectedProxy = activeProxies.get(lastProxyIndex);
+                    }
+                }
+                
+                lastUsedProxy = selectedProxy;
                 
                 logInfo("Rotating proxy: " + selectedProxy.getProtocol() + "://" + 
                     selectedProxy.getHost() + ":" + selectedProxy.getPort() + 
