@@ -741,7 +741,7 @@ public class BurpProxyRotate implements BurpExtension {
             // Disable SOCKS proxy and reset to default values
             String disableProxyJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"use_proxy\":false}}}}";
             String resetHostJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"host\":\"\"}}}}";
-            String resetPortJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"port\":1080}}}}";
+            String resetPortJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"port\":0}}}}";
             String resetDnsJson = "{\"user_options\":{\"connections\":{\"socks_proxy\":{\"dns_over_socks\":false}}}}";
             
             // Import settings into Burp
