@@ -641,9 +641,9 @@ public class ProxyRotateService {
                     
                     // Send success response based on SOCKS version
                     if (state.socksVersion == 5) {
-                        sendSocks5SuccessResponse(clientChannel);
+                        Socks5.sendSocks5SuccessResponse(clientChannel);
                     } else {
-                        sendSocks4SuccessResponse(clientChannel);
+                        Socks4.sendSocks4SuccessResponse(clientChannel);
                     }
                     
                     // Update state
@@ -659,7 +659,7 @@ public class ProxyRotateService {
                     if (state.selectedProxy != null && state.selectedProxy.isHttp()) {
                         // Send HTTP CONNECT request
                         logInfo("HTTP proxy connection established to " + state.selectedProxy.getHost() + ":" + state.selectedProxy.getPort());
-                        sendHttpConnectRequest(proxyChannel, state);
+                        HttpProxy.sendHttpConnectRequest(proxyChannel, state.targetHost, state.targetPort, state.selectedProxy);
                         
                         // Register for reading the HTTP response
                         proxyChannel.register(selector, SelectionKey.OP_READ);
@@ -697,7 +697,7 @@ public class ProxyRotateService {
                         state.stage = ConnectionStage.SOCKS5_AUTH;
                     } else {
                         // SOCKS4 proxy handshake directly sending the connect
-                        ByteBuffer request = createSocks4ConnectRequest(state.targetHost, state.targetPort);
+                        ByteBuffer request = Socks4.createSocks4ConnectRequest(state.targetHost, state.targetPort);
                         proxyChannel.write(request);
                         state.stage = ConnectionStage.SOCKS4_CONNECT;
                     }
@@ -738,9 +738,9 @@ public class ProxyRotateService {
                         }
                         
                         if (state.socksVersion == 5) {
-                            sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
+                            Socks5.sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
                         } else {
-                            sendSocks4ErrorResponse(clientChannel, (byte) 91); // Rejected
+                            Socks4.sendSocks4ErrorResponse(clientChannel, (byte) 91); // Rejected
                         }
                     }
                     
@@ -1199,28 +1199,22 @@ public class ProxyRotateService {
             // SOCKS5 - handle the greeting
             state.socksVersion = 5;
             
-            if (buffer.remaining() < 1) {
+            // Put the version byte back for processing
+            buffer.position(buffer.position() - 1);
+            
+            Socks5.Socks5GreetingResult greetingResult = Socks5.processSocks5Greeting(buffer);
+            
+            if (!greetingResult.success) {
+                if ("Need more data".equals(greetingResult.errorMessage)) {
+                    return;
+                }
+                logError(greetingResult.errorMessage);
+                closeConnection(clientChannel);
                 return;
-            }
-            
-            int numMethods = buffer.get() & 0xFF;
-            
-            if (buffer.remaining() < numMethods) {
-                return;
-            }
-            
-            // Skip the auth methods - we only support no auth (0)
-            for (int i = 0; i < numMethods; i++) {
-                buffer.get();
             }
             
             // Send authentication method response (0 = no auth)
-            ByteBuffer response = ByteBuffer.allocate(2);
-            response.put((byte) 5);  // SOCKS version
-            response.put((byte) 0);  // No auth method
-            response.flip();
-            
-            clientChannel.write(response);
+            Socks5.sendSocks5GreetingResponse(clientChannel);
             
             // Update state to wait for connect request
             state.stage = ConnectionStage.SOCKS5_CONNECT;
@@ -1229,62 +1223,22 @@ public class ProxyRotateService {
             // SOCKS4 - handle the connect request directly
             state.socksVersion = 4;
             
-            if (buffer.remaining() < 1) {
-                return; // Need more data
-            }
+            Socks4.Socks4ConnectResult result = Socks4.processSocks4ConnectRequest(buffer);
             
-            byte command = buffer.get();
-            
-            if (command != 1) {
-                // Only support CONNECT command
-                sendSocks4ErrorResponse(clientChannel, (byte) 91);
+            if (!result.success) {
+                if ("Need more data".equals(result.errorMessage)) {
+                    return; // Need more data
+                }
+                
+                logError(result.errorMessage);
+                Socks4.sendSocks4ErrorResponse(clientChannel, (byte) 91);
                 closeConnection(clientChannel);
                 return;
             }
             
-            if (buffer.remaining() < 6) {
-                return; // Need more data
-            }
-            
-            // Read port (2 bytes, big endian)
-            int targetPort = ((buffer.get() & 0xFF) << 8) | (buffer.get() & 0xFF);
-            
-            // Read IPv4 address (4 bytes)
-            byte[] ipv4 = new byte[4];
-            buffer.get(ipv4);
-            
-            String targetHost;
-            
-            if (ipv4[0] == 0 && ipv4[1] == 0 && ipv4[2] == 0 && ipv4[3] != 0) {
-                // SOCKS4A - domain name follows
-                // Skip the user ID
-                while (buffer.hasRemaining() && buffer.get() != 0) {
-                    // Skip to null terminator
-                }
-                
-                // Read domain name
-                StringBuilder domain = new StringBuilder();
-                while (buffer.hasRemaining()) {
-                    byte b = buffer.get();
-                    if (b == 0) break;
-                    domain.append((char) b);
-                }
-                
-                targetHost = domain.toString();
-            } else {
-                // Regular SOCKS4 - IPv4 address
-                targetHost = (ipv4[0] & 0xFF) + "." + (ipv4[1] & 0xFF) + "." + 
-                            (ipv4[2] & 0xFF) + "." + (ipv4[3] & 0xFF);
-                
-                // Skip the user ID
-                while (buffer.hasRemaining() && buffer.get() != 0) {
-                    // Skip to null terminator
-                }
-            }
-            
             // Save target information
-            state.targetHost = targetHost;
-            state.targetPort = targetPort;
+            state.targetHost = result.targetHost;
+            state.targetPort = result.targetPort;
             state.addressType = 1; // IPv4 type
             
             // Connect to the target through a random proxy
@@ -1299,105 +1253,23 @@ public class ProxyRotateService {
      * Process a SOCKS5 CONNECT request
      */
     private void processSocks5ConnectRequest(SocketChannel clientChannel, ConnectionState state, ByteBuffer buffer) throws IOException {
-        if (buffer.remaining() < 4) {
-            return; // Need more data
-        }
+        Socks5.Socks5ConnectResult result = Socks5.processSocks5ConnectRequest(buffer);
         
-        // Read the SOCKS5 command request
-        byte version = buffer.get();
-        if (version != 5) {
-            logError("Invalid SOCKS5 request version");
+        if (!result.success) {
+            if ("Need more data".equals(result.errorMessage)) {
+                return; // Need more data
+            }
+            
+            logError(result.errorMessage);
+            Socks5.sendSocks5ErrorResponse(clientChannel, result.errorCode);
             closeConnection(clientChannel);
             return;
         }
-        
-        byte command = buffer.get();
-        if (command != 1) {
-            // Only support CONNECT command
-            sendSocks5ErrorResponse(clientChannel, (byte) 7); // Command not supported
-            closeConnection(clientChannel);
-            return;
-        }
-        
-        // Skip reserved byte
-        buffer.get();
-        
-        // Read address type
-        byte addressType = buffer.get();
-        state.addressType = addressType;
-        
-        String targetHost;
-        int targetPort;
-        
-        switch (addressType) {
-            case 1: // IPv4
-                if (buffer.remaining() < 6) {
-                    return; // Need more data
-                }
-                
-                byte[] ipv4 = new byte[4];
-                buffer.get(ipv4);
-                targetHost = (ipv4[0] & 0xFF) + "." + (ipv4[1] & 0xFF) + "." + 
-                            (ipv4[2] & 0xFF) + "." + (ipv4[3] & 0xFF);
-                break;
-                
-            case 3: // Domain name
-                if (buffer.remaining() < 1) {
-                    return; // Need more data
-                }
-                
-                int domainLength = buffer.get() & 0xFF;
-                
-                if (buffer.remaining() < domainLength + 2) {
-                    return; // Need more data
-                }
-                
-                byte[] domain = new byte[domainLength];
-                buffer.get(domain);
-                targetHost = new String(domain);
-                break;
-                
-            case 4: // IPv6
-                if (buffer.remaining() < 18) {
-                    return; // Need more data
-                }
-                
-                byte[] ipv6 = new byte[16];
-                buffer.get(ipv6);
-                
-                // Format IPv6 address properly (Java's InetAddress for now)
-                try {
-                    java.net.InetAddress inetAddress = java.net.InetAddress.getByAddress(ipv6);
-                    targetHost = inetAddress.getHostAddress();
-                    
-                    // Ensure the address is in standard format with all colons
-                    // Remove IPv6 scope id if present (anything after %)
-                    if (targetHost.contains("%")) {
-                        targetHost = targetHost.substring(0, targetHost.indexOf("%"));
-                    }
-                } catch (Exception e) {
-                    // Fallback to manual formatting if InetAddress fails
-                    StringBuilder sb = new StringBuilder();
-                    for (int i = 0; i < 16; i += 2) {
-                        if (i > 0) sb.append(":");
-                        sb.append(String.format("%02x%02x", ipv6[i] & 0xFF, ipv6[i+1] & 0xFF));
-                    }
-                    targetHost = sb.toString();
-                }
-                break;
-                
-            default:
-                sendSocks5ErrorResponse(clientChannel, (byte) 8); // Address type not supported
-                closeConnection(clientChannel);
-                return;
-        }
-        
-        // Read port (2 bytes, big endian)
-        targetPort = ((buffer.get() & 0xFF) << 8) | (buffer.get() & 0xFF);
         
         // Save target information
-        state.targetHost = targetHost;
-        state.targetPort = targetPort;
+        state.targetHost = result.targetHost;
+        state.targetPort = result.targetPort;
+        state.addressType = result.addressType;
         
         // Connect to the target through a random proxy
         connectToTarget(clientChannel, state);
@@ -1468,9 +1340,9 @@ public class ProxyRotateService {
                 
                 if (connected) {
                     if (state.socksVersion == 5) {
-                        sendSocks5SuccessResponse(clientChannel);
+                        Socks5.sendSocks5SuccessResponse(clientChannel);
                     } else {
-                        sendSocks4SuccessResponse(clientChannel);
+                        Socks4.sendSocks4SuccessResponse(clientChannel);
                     }
                     
                     // Update state to connected
@@ -1500,9 +1372,9 @@ public class ProxyRotateService {
         if (proxy == null) {
             logError("No active proxies available");
             if (state.socksVersion == 5) {
-                sendSocks5ErrorResponse(clientChannel, (byte) 1);
+                Socks5.sendSocks5ErrorResponse(clientChannel, (byte) 1);
             } else {
-                sendSocks4ErrorResponse(clientChannel, (byte) 91);
+                Socks4.sendSocks4ErrorResponse(clientChannel, (byte) 91);
             }
             closeConnection(clientChannel);
             return;
@@ -1559,9 +1431,9 @@ public class ProxyRotateService {
             
             // Send error response
             if (state.socksVersion == 5) {
-                sendSocks5ErrorResponse(clientChannel, (byte) 1);
+                Socks5.sendSocks5ErrorResponse(clientChannel, (byte) 1);
             } else {
-                sendSocks4ErrorResponse(clientChannel, (byte) 91);
+                Socks4.sendSocks4ErrorResponse(clientChannel, (byte) 91);
             }
             
             closeConnection(clientChannel);
@@ -1573,80 +1445,43 @@ public class ProxyRotateService {
      */
     private void processSocks5AuthResponse(SocketChannel clientChannel, SocketChannel proxyChannel, 
                                         ConnectionState state, ByteBuffer buffer, boolean isAuthResponse) throws IOException {
-        if (isAuthResponse) {
-            // This is a response to username/password authentication
-            if (buffer.remaining() < 2) {
+        Socks5.Socks5AuthResult authResult = Socks5.processSocks5AuthResponse(buffer, isAuthResponse);
+        
+        switch (authResult.status) {
+            case NEED_MORE_DATA:
                 return; // Need more data
-            }
-            
-            byte authVersion = buffer.get();
-            byte authStatus = buffer.get();
-            
-            if (authVersion != 1) {
-                logError("Invalid SOCKS5 auth version: " + authVersion);
-                sendSocks5ErrorResponse(clientChannel, (byte) 1);
+                
+            case INVALID_VERSION:
+            case AUTH_FAILED:
+            case UNSUPPORTED_METHOD:
+                logError(authResult.errorMessage);
+                Socks5.sendSocks5ErrorResponse(clientChannel, (byte) 1);
                 closeConnection(clientChannel);
                 return;
-            }
-            
-            if (authStatus != 0) {
-                // Authentication failed
-                logError("SOCKS5 authentication failed with status: " + authStatus);
-                sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
-                closeConnection(clientChannel);
-                return;
-            }
-            
-            // Authentication succeeded, send connection request
-            logInfo("SOCKS5 authentication successful");
-            sendSocks5ConnectRequest(proxyChannel, state);
-        } else {
-            // Normal auth method selection
-            if (buffer.remaining() < 2) {
-                return; // Need more data
-            }
-            
-            byte version = buffer.get();
-            byte method = buffer.get();
-            
-            if (version != 5) {
-                logError("Invalid SOCKS5 version in auth response: " + version);
-                sendSocks5ErrorResponse(clientChannel, (byte) 1);
-                closeConnection(clientChannel);
-                return;
-            }
-            
-            // Handle authentication based on the selected method
-            if (method == 0) {
-                // No authentication required
+                
+            case AUTH_SUCCESS:
+                logInfo("SOCKS5 authentication successful");
+                Socks5.sendSocks5ConnectRequest(proxyChannel, state.targetHost, state.targetPort, state.addressType);
+                state.stage = ConnectionStage.SOCKS5_CONNECT;
+                break;
+                
+            case NO_AUTH:
                 logInfo("SOCKS5 proxy accepted no-auth method");
-                sendSocks5ConnectRequest(proxyChannel, state);
-            } else if (method == 2 && state.selectedProxy.isAuthenticated()) {
-                // Username/password authentication required
-                logInfo("SOCKS5 proxy requested username/password authentication");
+                Socks5.sendSocks5ConnectRequest(proxyChannel, state.targetHost, state.targetPort, state.addressType);
+                state.stage = ConnectionStage.SOCKS5_CONNECT;
+                break;
                 
-                // Send username/password authentication
-                byte[] usernameBytes = state.selectedProxy.getUsername().getBytes();
-                byte[] passwordBytes = state.selectedProxy.getPassword().getBytes();
-                
-                // Auth request: version 1, username len, username, password len, password
-                ByteBuffer authRequest = ByteBuffer.allocate(3 + usernameBytes.length + passwordBytes.length);
-                authRequest.put((byte) 1); // Auth subversion
-                authRequest.put((byte) usernameBytes.length);
-                authRequest.put(usernameBytes);
-                authRequest.put((byte) passwordBytes.length);
-                authRequest.put(passwordBytes);
-                authRequest.flip();
-                
-                proxyChannel.write(authRequest);
-                
-                // Update state to wait for auth response
-                state.stage = ConnectionStage.SOCKS5_AUTH_RESPONSE;
-            } else {
-                logError("SOCKS5 proxy authentication method not supported or credentials missing: " + method);
-                sendSocks5ErrorResponse(clientChannel, (byte) 1);
-                closeConnection(clientChannel);
-            }
+            case USERNAME_PASSWORD:
+                if (state.selectedProxy.isAuthenticated()) {
+                    logInfo("SOCKS5 proxy requested username/password authentication");
+                    Socks5.sendSocks5Auth(proxyChannel, state.selectedProxy.getUsername(), state.selectedProxy.getPassword());
+                    state.stage = ConnectionStage.SOCKS5_AUTH_RESPONSE;
+                } else {
+                    logError("SOCKS5 proxy requires authentication but no credentials provided");
+                    Socks5.sendSocks5ErrorResponse(clientChannel, (byte) 1);
+                    closeConnection(clientChannel);
+                }
+                break;
         }
     }
     
@@ -1655,71 +1490,30 @@ public class ProxyRotateService {
      */
     private void processSocks5ConnectResponse(SocketChannel clientChannel, SocketChannel proxyChannel, 
                                            ConnectionState state, ByteBuffer buffer) throws IOException {
-        if (buffer.remaining() < 4) {
-            return; // Need more data
-        }
+        Socks5.Socks5ConnectResponse response = Socks5.processSocks5ConnectResponse(buffer);
         
-        byte version = buffer.get();
-        byte status = buffer.get();
-        
-        // Skip reserved byte
-        buffer.get();
-        
-        // Read bound address type
-        byte boundType = buffer.get();
-        
-        // Skip address and port based on type
-        int skipBytes = 0;
-        switch (boundType) {
-            case 1: // IPv4
-                skipBytes = 4 + 2; // IPv4 + port
-                break;
-            case 3: // Domain
-                if (buffer.remaining() < 1) {
-                    return; // Need more data
-                }
-                skipBytes = (buffer.get() & 0xFF) + 2; // Domain length + port
-                break;
-            case 4: // IPv6
-                skipBytes = 16 + 2; // IPv6 + port
-                break;
-            default:
-                logError("Invalid address type in SOCKS5 response: " + boundType);
-                closeConnection(clientChannel);
-                return;
-        }
-        
-        // Skip the remaining data if we have enough
-        if (buffer.remaining() < skipBytes) {
-            return; // Need more data
-        }
-        for (int i = 0; i < skipBytes; i++) {
-            buffer.get();
-        }
-        
-        if (version != 5) {
-            logError("Invalid SOCKS5 response version: " + version);
-            closeConnection(clientChannel);
-            return;
-        }
-        
-        if (status != 0) {
-            // Connection failed
-            logError("SOCKS5 connection failed with status: " + status);
-            sendSocks5ErrorResponse(clientChannel, status);
+        if (!response.success) {
+            if ("Need more data".equals(response.errorMessage)) {
+                return; // Need more data
+            }
+            
+            logError(response.errorMessage);
+            if (response.errorCode != 0) {
+                Socks5.sendSocks5ErrorResponse(clientChannel, response.errorCode);
+            }
             closeConnection(clientChannel);
             return;
         }
         
         // Connection successful
-        sendSocks5SuccessResponse(clientChannel);
+        Socks5.sendSocks5SuccessResponse(clientChannel);
         
         // Update state to connected
         state.stage = ConnectionStage.PROXY_CONNECTED;
         
         // If there's any remaining data, forward it to the client
-        if (buffer.hasRemaining()) {
-            clientChannel.write(buffer);
+        if (response.remainingData != null && response.remainingData.hasRemaining()) {
+            clientChannel.write(response.remainingData);
         }
     }
     
@@ -1728,196 +1522,39 @@ public class ProxyRotateService {
      */
     private void processSocks4ConnectResponse(SocketChannel clientChannel, SocketChannel proxyChannel, 
                                            ConnectionState state, ByteBuffer buffer) throws IOException {
-        if (buffer.remaining() < 8) {
-            return; // Need more data
-        }
+        Socks4.Socks4ConnectResponse response = Socks4.processSocks4ConnectResponse(buffer);
         
-        byte nullByte = buffer.get();
-        byte status = buffer.get();
-        
-        // Skip the rest of the response (port and IP)
-        for (int i = 0; i < 6; i++) {
-            buffer.get();
-        }
-        
-        if (nullByte != 0) {
-            logError("Invalid SOCKS4 response format");
-            closeConnection(clientChannel);
-            return;
-        }
-        
-        if (status != 90) {
-            // Connection failed
-            logError("SOCKS4 connection failed with status: " + status);
-            sendSocks4ErrorResponse(clientChannel, status);
+        if (!response.success) {
+            if ("Need more data".equals(response.errorMessage)) {
+                return; // Need more data
+            }
+            
+            logError(response.errorMessage);
+            Socks4.sendSocks4ErrorResponse(clientChannel, response.statusCode);
             closeConnection(clientChannel);
             return;
         }
         
         // Connection successful
-        sendSocks4SuccessResponse(clientChannel);
+        Socks4.sendSocks4SuccessResponse(clientChannel);
         
         state.stage = ConnectionStage.PROXY_CONNECTED;
         
         // Forward remaining data to the client
-        if (buffer.hasRemaining()) {
-            clientChannel.write(buffer);
+        if (response.remainingData != null && response.remainingData.hasRemaining()) {
+            clientChannel.write(response.remainingData);
         }
     }
     
-    /**
-     * Create a SOCKS4 connection request
-     */
-    private ByteBuffer createSocks4ConnectRequest(String targetHost, int targetPort) {
-        ByteBuffer request;
-        
-        // Check if targetHost is an IP address
-        String[] ipParts = targetHost.split("\\.");
-        if (ipParts.length == 4) {
-            // Regular SOCKS4
-            request = ByteBuffer.allocate(9);
-            request.put((byte) 4); // SOCKS version
-            request.put((byte) 1); // CONNECT command
-            request.put((byte) ((targetPort >> 8) & 0xFF)); // Port high byte
-            request.put((byte) (targetPort & 0xFF)); // Port low byte
-            
-            // IP address
-            for (String part : ipParts) {
-                request.put((byte) (Integer.parseInt(part) & 0xFF));
-            }
-            
-            // Null-terminated user ID
-            request.put((byte) 0);
-        } else {
-            // SOCKS4A with domain name
-            byte[] domain = targetHost.getBytes();
-            request = ByteBuffer.allocate(10 + domain.length);
-            request.put((byte) 4); // SOCKS version
-            request.put((byte) 1); // CONNECT command
-            request.put((byte) ((targetPort >> 8) & 0xFF)); // Port high byte
-            request.put((byte) (targetPort & 0xFF)); // Port low byte
-            request.put((byte) 0); // 0.0.0.x for SOCKS4A
-            request.put((byte) 0);
-            request.put((byte) 0);
-            request.put((byte) 1); // Non-zero value
-            request.put((byte) 0); // Null-terminated user ID
-            
-            // Domain name
-            request.put(domain);
-            request.put((byte) 0); // Null-terminate domain
-        }
-        
-        request.flip();
-        return request;
-    }
+
     
-    /**
-     * Send a SOCKS5 error response to the client
-     */
-    private void sendSocks5ErrorResponse(SocketChannel channel, byte errorCode) {
-        try {
-            ByteBuffer response = ByteBuffer.allocate(10);
-            response.put((byte) 5);  // SOCKS version
-            response.put(errorCode); // Error code
-            response.put((byte) 0);  // Reserved
-            response.put((byte) 1);  // Address type (IPv4)
-            
-            // IP address (0.0.0.0)
-            response.put((byte) 0);
-            response.put((byte) 0);
-            response.put((byte) 0);
-            response.put((byte) 0);
-            
-            // Port (0)
-            response.put((byte) 0);
-            response.put((byte) 0);
-            
-            response.flip();
-            channel.write(response);
-        } catch (IOException e) {
-            logError("Error sending SOCKS5 error response: " + e.getMessage());
-        }
-    }
+
     
-    /**
-     * Send a SOCKS5 success response to the client
-     */
-    private void sendSocks5SuccessResponse(SocketChannel channel) {
-        try {
-            ByteBuffer response = ByteBuffer.allocate(10);
-            response.put((byte) 5);  // SOCKS version
-            response.put((byte) 0);  // Success
-            response.put((byte) 0);  // Reserved
-            response.put((byte) 1);  // Address type (IPv4)
-            
-            // IP address (0.0.0.0)
-            response.put((byte) 0);
-            response.put((byte) 0);
-            response.put((byte) 0);
-            response.put((byte) 0);
-            
-            // Port (0)
-            response.put((byte) 0);
-            response.put((byte) 0);
-            
-            response.flip();
-            channel.write(response);
-        } catch (IOException e) {
-            logError("Error sending SOCKS5 success response: " + e.getMessage());
-        }
-    }
+
     
-    /**
-     * Send a SOCKS4 error response to the client
-     */
-    private void sendSocks4ErrorResponse(SocketChannel channel, byte errorCode) {
-        try {
-            ByteBuffer response = ByteBuffer.allocate(8);
-            response.put((byte) 0);  // Null byte
-            response.put(errorCode); // Error code
-            
-            // Port (0)
-            response.put((byte) 0);
-            response.put((byte) 0);
-            
-            // IP (0.0.0.0)
-            response.put((byte) 0);
-            response.put((byte) 0);
-            response.put((byte) 0);
-            response.put((byte) 0);
-            
-            response.flip();
-            channel.write(response);
-        } catch (IOException e) {
-            logError("Error sending SOCKS4 error response: " + e.getMessage());
-        }
-    }
+
     
-    /**
-     * Send a SOCKS4 success response to the client
-     */
-    private void sendSocks4SuccessResponse(SocketChannel channel) {
-        try {
-            ByteBuffer response = ByteBuffer.allocate(8);
-            response.put((byte) 0);  // Null byte
-            response.put((byte) 90); // Success
-            
-            // Port (0)
-            response.put((byte) 0);
-            response.put((byte) 0);
-            
-            // IP (0.0.0.0)
-            response.put((byte) 0);
-            response.put((byte) 0);
-            response.put((byte) 0);
-            response.put((byte) 0);
-            
-            response.flip();
-            channel.write(response);
-        } catch (IOException e) {
-            logError("Error sending SOCKS4 success response: " + e.getMessage());
-        }
-    }
+
 
     /**
      * Closes a connection and cleans up resources
@@ -2309,131 +1946,9 @@ public class ProxyRotateService {
         logInfo("All bypass domains have been cleared");
     }
 
-    /**
-     * Send a SOCKS5 connect request to the proxy
-     */
-    private void sendSocks5ConnectRequest(SocketChannel proxyChannel, ConnectionState state) throws IOException {
-        ByteBuffer request;
-        
-        if (state.addressType == 1) { // IPv4
-            // Parse IPv4 address
-            String[] octets = state.targetHost.split("\\.");
-            if (octets.length != 4) {
-                // Invalid IPv4 address
-                return;
-            }
-            
-            request = ByteBuffer.allocate(10);
-            request.put((byte) 5); // SOCKS version
-            request.put((byte) 1); // CONNECT command
-            request.put((byte) 0); // Reserved
-            request.put((byte) 1); // IPv4 address type
-            
-            for (String octet : octets) {
-                request.put((byte) (Integer.parseInt(octet) & 0xFF));
-            }
-            
-        } else if (state.addressType == 4) { // IPv6
-            // Create a request with the correct IPv6 address
-            request = ByteBuffer.allocate(22);
-            request.put((byte) 5); // SOCKS version
-            request.put((byte) 1); // CONNECT command
-            request.put((byte) 0); // Reserved
-            request.put((byte) 4); // IPv6 address type
-            
-            // Parse the IPv6 address and add it to the request
-            try {
-                // Use Java InetAddress to parse the IPv6 address correctly (to test performance)
-                java.net.Inet6Address inet6Address = (java.net.Inet6Address) 
-                    java.net.InetAddress.getByName(state.targetHost);
-                
-                // Get the raw bytes of the IPv6 address (16 bytes)
-                byte[] ipv6Bytes = inet6Address.getAddress();
-                request.put(ipv6Bytes);
-            } catch (Exception e) {
-                logError("Error parsing IPv6 address: " + state.targetHost + " - " + e.getMessage());
-                // If parsing fails, use a zero address as fallback
-                for (int i = 0; i < 16; i++) {
-                    request.put((byte) 0);
-                }
-            }
-            
-        } else { // Domain name
-            byte[] domain = state.targetHost.getBytes();
-            request = ByteBuffer.allocate(7 + domain.length);
-            request.put((byte) 5);
-            request.put((byte) 1);
-            request.put((byte) 0);
-            request.put((byte) 3);
-            request.put((byte) domain.length);
-            request.put(domain);
-        }
-        
-        // Set port (big endian)
-        request.put((byte) ((state.targetPort >> 8) & 0xFF));
-        request.put((byte) (state.targetPort & 0xFF));
-        
-        request.flip();
-        proxyChannel.write(request);
-        
-        // Update state
-        state.stage = ConnectionStage.SOCKS5_CONNECT;
-    }
 
-    /**
-     * Send an HTTP CONNECT request to the proxy
-     */
-    private void sendHttpConnectRequest(SocketChannel proxyChannel, ConnectionState state) throws IOException {
-        // Ensure we have a large enough buffer for HTTP operations
-        state.ensureBufferCapacity(32768); // At least 32KB
-        
-        // Use an efficient StringBuilder to build the request
-        StringBuilder requestBuilder = new StringBuilder(512);
-        
-        // CONNECT host:port HTTP/1.1\r\n
-        requestBuilder.append("CONNECT ")
-                     .append(state.targetHost)
-                     .append(':')
-                     .append(state.targetPort)
-                     .append(" HTTP/1.1\r\n");
-        
-        // Host: host:port\r\n
-        requestBuilder.append("Host: ")
-                     .append(state.targetHost)
-                     .append(':')
-                     .append(state.targetPort)
-                     .append("\r\n");
-        
-        // Add authentication if needed
-        if (state.selectedProxy != null && state.selectedProxy.isAuthenticated()) {
-            String auth = state.selectedProxy.getUsername() + ":" + state.selectedProxy.getPassword();
-            String encodedAuth = java.util.Base64.getEncoder().encodeToString(auth.getBytes());
-            requestBuilder.append("Proxy-Authorization: Basic ")
-                         .append(encodedAuth)
-                         .append("\r\n");
-            
-            logInfo("Added Basic authentication for HTTP proxy");
-        }
-        
-        // Add standard headers
-        requestBuilder.append("Connection: keep-alive\r\n");
-        requestBuilder.append("User-Agent: BurpProxyRotate\r\n");
-        requestBuilder.append("\r\n"); // End request with blank line
-        
-        // Convert to bytes
-        String request = requestBuilder.toString();
-        byte[] requestBytes = request.getBytes();
-        
-        // Create a properly sized direct buffer
-        ByteBuffer headerBuffer = ByteBuffer.allocateDirect(requestBytes.length);
-        headerBuffer.put(requestBytes);
-        headerBuffer.flip();
-        
-        // Send the request
-        proxyChannel.write(headerBuffer);
-        
-        logInfo("Sent HTTP CONNECT request to " + state.targetHost + ":" + state.targetPort);
-    }
+
+
     
     /**
      * Process an HTTP CONNECT response from the proxy
@@ -2450,128 +1965,47 @@ public class ProxyRotateService {
             buffer.flip();
         }
         
-        byte[] responseBytes = new byte[buffer.remaining()];
-        buffer.get(responseBytes);
+        HttpProxy.HttpConnectResponse response = HttpProxy.processHttpConnectResponse(buffer);
         
-        // First find the first line to check status code (parse status line basically)
-        int endOfFirstLine = -1;
-        boolean isSuccessStatus = false;
+        logInfo(response.message);
         
-        // Find end of status line and check for "200" status code
-        for (int i = 0; i < responseBytes.length - 1; i++) {
-            if (responseBytes[i] == '\r' && responseBytes[i + 1] == '\n') {
-                endOfFirstLine = i;
-                // Find "200" in the status line
-                boolean found200 = false;
-                for (int j = 0; j < endOfFirstLine - 2; j++) {
-                    if (responseBytes[j] == '2' && responseBytes[j + 1] == '0' && responseBytes[j + 2] == '0') {
-                        isSuccessStatus = true;
-                        found200 = true;
-                        break;
-                    }
+        if (!response.success) {
+            if (response.message.contains("Incomplete") || response.message.contains("waiting for more data")) {
+                // Need to buffer data and wait for more
+                if (response.bodyData != null) {
+                    state.outputBuffer = response.bodyData;
                 }
-                
-                String statusLine = new String(responseBytes, 0, Math.min(endOfFirstLine, 100));
-                logInfo("Received HTTP response: " + statusLine + (endOfFirstLine > 100 ? "..." : ""));
-                
-                // If we didn't find 200, check if it might be a 407 (auth required)
-                if (!found200) {
-                    boolean found407 = false;
-                    for (int j = 0; j < endOfFirstLine - 2; j++) {
-                        if (responseBytes[j] == '4' && responseBytes[j + 1] == '0' && responseBytes[j + 2] == '7') {
-                            found407 = true;
-                            break;
-                        }
-                    }
-                    
-                    // Authentication required
-                    if (found407) {
-                        logError("HTTP proxy requires authentication or credentials are invalid");
-                        
-                        if (state.socksVersion == 5) {
-                            sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
-                        } else {
-                            sendSocks4ErrorResponse(clientChannel, (byte) 91); // Rejected
-                        }
-                        
-                        closeConnection(clientChannel);
-                        return;
-                    }
-                }
-                break;
-            }
-        }
-        
-        if (endOfFirstLine == -1) {
-            // We didn't receive a complete line yet, buffer and wait for more data
-            logInfo("Incomplete HTTP response, waiting for more data");
-            
-            // Create a new buffer with the remaining data - use a larger size for HTTP
-            int bufferSize = Math.max(responseBytes.length * 2, 32768); // At least 32KB
-            ByteBuffer remainingData = ByteBuffer.allocateDirect(bufferSize);
-            remainingData.put(responseBytes);
-            remainingData.flip();
-            state.outputBuffer = remainingData;
-            return;
-        }
-        
-        if (isSuccessStatus) {
-            int endOfHeaders = -1;
-            for (int i = 0; i < responseBytes.length - 3; i++) {
-                if (responseBytes[i] == '\r' && responseBytes[i + 1] == '\n' &&
-                    responseBytes[i + 2] == '\r' && responseBytes[i + 3] == '\n') {
-                    endOfHeaders = i + 3; // Point to the last \n in \r\n\r\n
-                    break;
-                }
-            }
-            
-            if (endOfHeaders == -1) {
-                // Headers not complete yet, buffer and wait for more
-                logInfo("HTTP headers incomplete, waiting for more data (received " + responseBytes.length + " bytes)");
-                
-                // Create a new buffer with the remaining data - use a larger size for HTTP
-                int bufferSize = Math.max(responseBytes.length * 2, 32768); // At least 32KB
-                ByteBuffer remainingData = ByteBuffer.allocateDirect(bufferSize);
-                remainingData.put(responseBytes);
-                remainingData.flip();
-                state.outputBuffer = remainingData;
                 return;
             }
             
-            // Successfully connected
-            logInfo("HTTP CONNECT successful");
-            
-            // Send success responss
-            if (state.socksVersion == 5) {
-                sendSocks5SuccessResponse(clientChannel);
-            } else {
-                sendSocks4SuccessResponse(clientChannel);
-            }
-            
-            state.stage = ConnectionStage.PROXY_CONNECTED;
-            
-            // If there's data after the headers, that's the beginning of the tunneled connection
-            if (endOfHeaders + 1 < responseBytes.length) {
-                // Create a buffer with just the body part to forward to the client
-                ByteBuffer bodyBuffer = ByteBuffer.allocateDirect(responseBytes.length - (endOfHeaders + 1));
-                bodyBuffer.put(responseBytes, endOfHeaders + 1, responseBytes.length - (endOfHeaders + 1));
-                bodyBuffer.flip();
-                
-                if (bodyBuffer.hasRemaining()) {
-                    clientChannel.write(bodyBuffer);
-                }
-            }
-        } else {
-            String statusLine = new String(responseBytes, 0, Math.min(responseBytes.length, 100));
-            logError("HTTP CONNECT failed: " + statusLine + (responseBytes.length > 100 ? "..." : ""));
+            // Connection failed
+            logError(response.message);
             
             if (state.socksVersion == 5) {
-                sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
+                Socks5.sendSocks5ErrorResponse(clientChannel, (byte) 1); // General failure
             } else {
-                sendSocks4ErrorResponse(clientChannel, (byte) 91); // Rejected
+                Socks4.sendSocks4ErrorResponse(clientChannel, (byte) 91); // Rejected
             }
             
             closeConnection(clientChannel);
+            return;
+        }
+        
+        // Successfully connected
+        logInfo("HTTP CONNECT successful");
+        
+        // Send success response
+        if (state.socksVersion == 5) {
+            Socks5.sendSocks5SuccessResponse(clientChannel);
+        } else {
+            Socks4.sendSocks4SuccessResponse(clientChannel);
+        }
+        
+        state.stage = ConnectionStage.PROXY_CONNECTED;
+        
+        // If there's body data after the headers, forward it to the client
+        if (response.bodyData != null && response.bodyData.hasRemaining()) {
+            clientChannel.write(response.bodyData);
         }
     }
 

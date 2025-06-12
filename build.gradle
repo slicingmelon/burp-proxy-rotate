@@ -2,25 +2,7 @@ plugins {
     id 'java'
 }
 
-project.ext.BASE_VERSION = '1.0'
-
-def getBranchVersion() {
-    def process = "git rev-parse --abbrev-ref HEAD".execute()
-    process.waitFor()
-    def branch = process.text.trim()
-    def sanitizedBranchName = branch.replace('/', '-')
-
-    if (branch == 'main') {
-        return "${project.ext.BASE_VERSION}-main"
-    } else if (branch.startsWith('release/')) {
-        def releaseVersion = branch.replace('release/', '')
-        return "${releaseVersion}-beta"
-    } else {
-        return "${project.ext.BASE_VERSION}-${sanitizedBranchName}-dev"
-    }
-}
-
-version = getBranchVersion()
+version = '0.9'
 
 repositories {
     mavenLocal()
@@ -28,13 +10,12 @@ repositories {
 }
 
 dependencies {
-    compileOnly 'net.portswigger.burp.extensions:montoya-api:2025.4'
+    compileOnly 'net.portswigger.burp.extensions:montoya-api:2025.5'
 }
 
 jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from {
-        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+        configurations.runtimeClasspath.findAll { it.name.endsWith('jar') }.collect { zipTree(it) }
     }
-    
-    archiveFileName = "burp-proxy-rotate-${version}.jar"
 }
