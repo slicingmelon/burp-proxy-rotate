@@ -1546,16 +1546,6 @@ public class ProxyRotateService {
         }
     }
     
-
-    
-
-    
-
-    
-
-    
-
-
     /**
      * Closes a connection and cleans up resources
      */
