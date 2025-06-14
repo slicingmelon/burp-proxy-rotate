@@ -86,7 +86,9 @@ public class BurpProxyRotate implements BurpExtension {
     private static final String PROXY_SELECTION_MODE_KEY = "proxySelectionMode";
     
     private javax.swing.Timer statsUpdateTimer;
+    private javax.swing.Timer uiUpdateTimer;
     private JLabel statsLabel;
+    private volatile boolean uiUpdatePending = false;
 
     // default constants for ALL settings
     private static final int DEFAULT_BUFFER_SIZE = 8092;
@@ -703,6 +705,16 @@ public class BurpProxyRotate implements BurpExtension {
         });
         statsUpdateTimer.start();
         
+        // Batch UI updates every 500ms for better performance
+        uiUpdateTimer = new javax.swing.Timer(500, _ -> {
+            if (uiUpdatePending) {
+                proxyTableModel.fireTableDataChanged();
+                updateServerButtons();
+                uiUpdatePending = false;
+            }
+        });
+        uiUpdateTimer.start();
+        
         updateProxyTable();
         
         return mainPanel;
@@ -979,6 +991,10 @@ public class BurpProxyRotate implements BurpExtension {
         if (statsUpdateTimer != null && statsUpdateTimer.isRunning()) {
             statsUpdateTimer.stop();
         }
+        
+        if (uiUpdateTimer != null && uiUpdateTimer.isRunning()) {
+            uiUpdateTimer.stop();
+        }
     }
     
     /**
@@ -1049,14 +1065,11 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Update the proxy table
+     * Update the proxy table (batched for performance)
      */
     private void updateProxyTable() {
         if (proxyTableModel != null) {
-            SwingUtilities.invokeLater(() -> {
-                proxyTableModel.fireTableDataChanged();
-                updateServerButtons();
-            });
+            uiUpdatePending = true; // Will be processed by uiUpdateTimer
         }
     }
     
