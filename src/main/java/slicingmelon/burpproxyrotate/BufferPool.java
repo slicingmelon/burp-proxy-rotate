@@ -37,6 +37,7 @@ public class BufferPool {
         if (minSize <= SMALL_SIZE) {
             ByteBuffer buffer = smallBuffers.poll();
             if (buffer != null) {
+                smallCount.decrementAndGet(); // Fix: decrement count when taking from pool
                 buffer.clear();
                 return buffer;
             }
@@ -44,6 +45,7 @@ public class BufferPool {
         } else if (minSize <= MEDIUM_SIZE) {
             ByteBuffer buffer = mediumBuffers.poll();
             if (buffer != null) {
+                mediumCount.decrementAndGet(); // Fix: decrement count when taking from pool
                 buffer.clear();
                 return buffer;
             }
@@ -51,6 +53,7 @@ public class BufferPool {
         } else {
             ByteBuffer buffer = largeBuffers.poll();
             if (buffer != null) {
+                largeCount.decrementAndGet(); // Fix: decrement count when taking from pool
                 buffer.clear();
                 return buffer;
             }
@@ -69,17 +72,25 @@ public class BufferPool {
         buffer.clear();
         int capacity = buffer.capacity();
         
-        if (capacity == SMALL_SIZE && smallCount.get() < MAX_POOLED_BUFFERS) {
+        // Accept buffers that are close to our standard sizes (within 10% difference)
+        if (isCloseToSize(capacity, SMALL_SIZE) && smallCount.get() < MAX_POOLED_BUFFERS) {
             smallBuffers.offer(buffer);
             smallCount.incrementAndGet();
-        } else if (capacity == MEDIUM_SIZE && mediumCount.get() < MAX_POOLED_BUFFERS) {
+        } else if (isCloseToSize(capacity, MEDIUM_SIZE) && mediumCount.get() < MAX_POOLED_BUFFERS) {
             mediumBuffers.offer(buffer);
             mediumCount.incrementAndGet();
-        } else if (capacity == LARGE_SIZE && largeCount.get() < MAX_POOLED_BUFFERS) {
+        } else if (isCloseToSize(capacity, LARGE_SIZE) && largeCount.get() < MAX_POOLED_BUFFERS) {
             largeBuffers.offer(buffer);
             largeCount.incrementAndGet();
         }
-        // If pool is full, let GC handle the buffer
+        // If pool is full or size doesn't match, let GC handle the buffer
+    }
+    
+    /**
+     * Check if buffer size is close enough to a standard size to be pooled
+     */
+    private boolean isCloseToSize(int actualSize, int standardSize) {
+        return Math.abs(actualSize - standardSize) <= (standardSize * 0.1);
     }
     
     /**

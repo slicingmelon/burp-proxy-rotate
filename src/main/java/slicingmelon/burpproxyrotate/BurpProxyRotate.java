@@ -1244,10 +1244,12 @@ public class BurpProxyRotate implements BurpExtension {
                                 activeCount[0]++;
                             }
                         }
-                        updateProxyTable();
+                        
+                        // Batch UI updates - only update every 5 validations or at the end
                         synchronized (completedCount) {
                             completedCount[0]++;
                             if (completedCount[0] % 5 == 0 || completedCount[0] == total) {
+                                updateProxyTable();
                                 logMessage("Proxy validation progress: " + completedCount[0] + "/" + total + " completed");
                             }
                         }
@@ -1256,9 +1258,11 @@ public class BurpProxyRotate implements BurpExtension {
                                   " - " + e.getMessage());
                         proxy.setActive(false);
                         proxy.setErrorMessage("Validation error: " + e.getMessage());
-                        updateProxyTable();
                         synchronized (completedCount) {
                             completedCount[0]++;
+                            if (completedCount[0] % 5 == 0 || completedCount[0] == total) {
+                                updateProxyTable();
+                            }
                         }
                     }
                 });

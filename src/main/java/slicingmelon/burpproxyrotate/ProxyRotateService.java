@@ -570,9 +570,8 @@ public class ProxyRotateService {
         
         clientChannel.register(selector, SelectionKey.OP_READ);
         
-        // Create and store connection state with lazy buffer initialization
+        // Create and store connection state with truly lazy buffer initialization
         ConnectionState state = new ConnectionState();
-        state.initializeBuffers(); // Initialize buffers from pool
         connectionStates.put(clientChannel, state);
         lastActivityTime.put(clientChannel, System.currentTimeMillis());
         
@@ -833,11 +832,9 @@ public class ProxyRotateService {
             return;
         }
         
-        // Check if we need to resize the buffer
-        if (state.inputBuffer.capacity() < bufferSize) {
-            // Allocate a larger buffer
-            ByteBuffer newBuffer = ByteBuffer.allocateDirect(bufferSize);
-            state.inputBuffer = newBuffer;
+        // Initialize buffer if needed using pool
+        if (state.inputBuffer == null) {
+            state.initializeBuffers();
         }
         
         ByteBuffer buffer = state.inputBuffer;
@@ -913,14 +910,8 @@ public class ProxyRotateService {
                                 closeConnection(clientChannel);
                             }
                         } else {
-                            // Regular proxy forwarding
-                            ByteBuffer forwardBuffer = ByteBuffer.allocate(buffer.remaining());
-                            forwardBuffer.put(buffer);
-                            forwardBuffer.flip();
-                            
-                            while (forwardBuffer.hasRemaining()) {
-                                proxyChannel.write(forwardBuffer);
-                            }
+                            // Regular proxy forwarding - write directly without extra allocation
+                            proxyChannel.write(buffer);
                         }
                     }
                     break;
@@ -971,13 +962,12 @@ public class ProxyRotateService {
             return;
         }
         
-        // Check if we need to resize the buffer
-        if (state.inputBuffer.capacity() < bufferSize) {
-            ByteBuffer newBuffer = ByteBuffer.allocateDirect(bufferSize);
-            state.inputBuffer = newBuffer;
+        // Initialize buffer if needed using pool
+        if (state.inputBuffer == null) {
+            state.initializeBuffers();
         }
         
-        // Use a shared buffer for better performance and less garbage collection
+        // Use pooled buffer for better performance
         ByteBuffer buffer = state.inputBuffer;
         buffer.clear();
         
@@ -1877,6 +1867,11 @@ public class ProxyRotateService {
                      .append(maxConnectionsOnSingleProxy)
                      .append(")");
             }
+        }
+        
+        // Add buffer pool stats
+        if (bufferPool != null) {
+            stats.append(" | ").append(bufferPool.getStats());
         }
         
         return stats.toString();
