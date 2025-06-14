@@ -171,8 +171,6 @@ public class ProxyRotateService {
     }
 
     // Track the last used proxy to enforce rotation - use atomic for better performance
-    private volatile int lastProxyIndex = -1;
-    private volatile ProxyEntry lastUsedProxy = null;
     private final java.util.concurrent.atomic.AtomicInteger roundRobinIndex = new java.util.concurrent.atomic.AtomicInteger(0);
 
     /**
@@ -501,8 +499,7 @@ public class ProxyRotateService {
         
         try {
             // Reset the proxy rotation index
-            lastProxyIndex = -1;
-            lastUsedProxy = null;
+            roundRobinIndex.set(0);
             
             // Close the selector to interrupt the selector thread
             if (selector != null) {
