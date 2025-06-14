@@ -28,7 +28,7 @@ public class BufferPool {
     private final AtomicInteger mediumCount = new AtomicInteger(0);
     private final AtomicInteger largeCount = new AtomicInteger(0);
     
-    private final int MAX_POOLED_BUFFERS = 100;
+    private final int MAX_POOLED_BUFFERS = 200; // Increased for high-volume scanning
     
     /**
      * Get a buffer of appropriate size
@@ -95,14 +95,15 @@ public class BufferPool {
     
     /**
      * Pre-allocate buffers for better performance
+     * Optimized for high-volume scanning workloads
      */
     public void warmUp() {
-        // Pre-allocate some buffers
-        for (int i = 0; i < 20; i++) {
+        // Pre-allocate more small buffers for SOCKS handshakes and small requests
+        for (int i = 0; i < 50; i++) {
             smallBuffers.offer(ByteBuffer.allocateDirect(SMALL_SIZE));
             smallCount.incrementAndGet();
         }
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 15; i++) {
             mediumBuffers.offer(ByteBuffer.allocateDirect(MEDIUM_SIZE));
             mediumCount.incrementAndGet();
         }

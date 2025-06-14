@@ -118,14 +118,14 @@ public class ProxyRotateService {
         }
         
         /**
-         * Lazy initialization of buffers using the buffer pool
+         * Simple buffer initialization without pool (more memory efficient)
          */
         public void initializeBuffers() {
             if (inputBuffer == null) {
-                inputBuffer = bufferPool.acquire(bufferSize);
+                inputBuffer = ByteBuffer.allocate(bufferSize); // Use heap buffers
             }
             if (outputBuffer == null) {
-                outputBuffer = bufferPool.acquire(bufferSize);
+                outputBuffer = ByteBuffer.allocate(bufferSize); // Use heap buffers
             }
         }
         
@@ -181,9 +181,8 @@ public class ProxyRotateService {
         this.proxyListLock = proxyListLock;
         this.logging = logging;
         
-        // Initialize buffer pool
-        this.bufferPool = new BufferPool();
-        this.bufferPool.warmUp();
+        // Using simple heap buffers instead of complex pooling
+        // Java's GC handles short-lived buffers very efficiently
         
         // Add default Burp Collaborator domains
         bypassDomains.add("burpcollaborator.net");
@@ -1548,19 +1547,8 @@ public class ProxyRotateService {
             // Get the proxy channel if it exists
             SocketChannel proxyChannel = proxyConnections.remove(clientChannel);
             
-            // Get the state and release buffers
+            // Get the state - buffers will be GC'd automatically
             ConnectionState state = connectionStates.remove(clientChannel);
-            if (state != null) {
-                // Return buffers to pool
-                if (state.inputBuffer != null) {
-                    bufferPool.release(state.inputBuffer);
-                    state.inputBuffer = null;
-                }
-                if (state.outputBuffer != null) {
-                    bufferPool.release(state.outputBuffer);
-                    state.outputBuffer = null;
-                }
-            }
             
             // Close the client channel
             cancelAndCloseChannel(clientChannel);
@@ -1869,10 +1857,8 @@ public class ProxyRotateService {
             }
         }
         
-        // Add buffer pool stats
-        if (bufferPool != null) {
-            stats.append(" | ").append(bufferPool.getStats());
-        }
+        // Buffer pool disabled for memory efficiency
+        stats.append(" | BufferPool: Disabled");
         
         return stats.toString();
     }
