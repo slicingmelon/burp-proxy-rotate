@@ -375,7 +375,7 @@ public class BurpProxyRotate implements BurpExtension {
                 1024, 65535, 1));
         portSpinner.setEnabled(!randomPortCheckbox.isSelected());
         
-        randomPortCheckbox.addActionListener(_ -> {
+        randomPortCheckbox.addActionListener(e -> {
             boolean random = randomPortCheckbox.isSelected();
             portSpinner.setEnabled(!random);
             if (random) {
@@ -386,7 +386,7 @@ public class BurpProxyRotate implements BurpExtension {
             api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
         });
         
-        portSpinner.addChangeListener(_ -> {
+        portSpinner.addChangeListener(e -> {
             if (!randomPortCheckbox.isSelected()) {
                 configuredLocalPort = (Integer) portSpinner.getValue();
                 api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
@@ -422,10 +422,10 @@ public class BurpProxyRotate implements BurpExtension {
         controlPanel.add(statsLabel, gbc);
         
         enableButton = new JButton("Enable Proxy Rotate");
-        enableButton.addActionListener(_ -> enableProxyRotate());
+        enableButton.addActionListener(e -> enableProxyRotate());
         
         disableButton = new JButton("Disable Proxy Rotate");
-        disableButton.addActionListener(_ -> disableProxyRotate());
+        disableButton.addActionListener(e -> disableProxyRotate());
         disableButton.setEnabled(false);
         
         JPanel controlButtonPanel = new JPanel(new GridLayout(1, 2, 10, 0));
@@ -482,7 +482,7 @@ public class BurpProxyRotate implements BurpExtension {
         unifiedInputPanel.add(unifiedField);
         unifiedInputPanel.add(unifiedAddButton);
         
-        unifiedAddButton.addActionListener(_ -> {
+        unifiedAddButton.addActionListener(e -> {
             String proxyUrl = unifiedField.getText().trim();
             if (proxyUrl.isEmpty() || proxyUrl.equals("socks5://host:port")) {
                 JOptionPane.showMessageDialog(mainPanel, "Please enter a proxy URL", "Validation Error", JOptionPane.ERROR_MESSAGE);
@@ -542,7 +542,7 @@ public class BurpProxyRotate implements BurpExtension {
         bulkPanel.add(bulkScrollPane, BorderLayout.CENTER);
         bulkPanel.add(bulkAddButton, BorderLayout.SOUTH);
         
-        bulkAddButton.addActionListener(_ -> {
+        bulkAddButton.addActionListener(e -> {
             String bulk = bulkTextArea.getText().trim();
             if (bulk.isEmpty()) {
                 return;
@@ -628,7 +628,7 @@ public class BurpProxyRotate implements BurpExtension {
         JPanel buttonPanel = new JPanel();
         
         JButton removeButton = new JButton("Remove Selected");
-        removeButton.addActionListener(_ -> {
+        removeButton.addActionListener(e -> {
             int selectedRow = proxyTable.getSelectedRow();
             if (selectedRow >= 0) {
                 removeProxy(selectedRow);
@@ -636,7 +636,7 @@ public class BurpProxyRotate implements BurpExtension {
         });
         
         JButton clearButton = new JButton("Clear All");
-        clearButton.addActionListener(_ -> {
+        clearButton.addActionListener(e -> {
             int confirm = JOptionPane.showConfirmDialog(
                     mainPanel,
                     "Are you sure you want to remove all proxies?",
@@ -650,7 +650,7 @@ public class BurpProxyRotate implements BurpExtension {
         });
         
         JButton validateButton = new JButton("Validate All");
-        validateButton.addActionListener(_ -> validateAllProxies());
+        validateButton.addActionListener(e -> validateAllProxies());
         
         buttonPanel.add(removeButton);
         buttonPanel.add(clearButton);
@@ -696,7 +696,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         
-        statsUpdateTimer = new javax.swing.Timer(1000, _ -> {
+        statsUpdateTimer = new javax.swing.Timer(1000, e -> {
             if (socksProxyService != null && socksProxyService.isRunning()) {
                 statsLabel.setText(socksProxyService.getConnectionPoolStats());
             } else {
@@ -706,7 +706,7 @@ public class BurpProxyRotate implements BurpExtension {
         statsUpdateTimer.start();
         
         // Batch UI updates every 500ms for better performance
-        uiUpdateTimer = new javax.swing.Timer(500, _ -> {
+        uiUpdateTimer = new javax.swing.Timer(500, e -> {
             if (uiUpdatePending) {
                 proxyTableModel.fireTableDataChanged();
                 updateServerButtons();
@@ -1627,7 +1627,7 @@ public class BurpProxyRotate implements BurpExtension {
         controlsPanel.add(new JLabel("Buffer Size (bytes):"), gbc);
         
         bufferSizeSpinner = new JSpinner(new SpinnerNumberModel(bufferSize, 1024, 65536, 1024));
-        bufferSizeSpinner.addChangeListener(_ -> {
+        bufferSizeSpinner.addChangeListener(e -> {
             bufferSize = (Integer) bufferSizeSpinner.getValue();
             saveSettings();
             logMessage("Buffer size updated to " + bufferSize + " bytes");
@@ -1641,7 +1641,7 @@ public class BurpProxyRotate implements BurpExtension {
         controlsPanel.add(new JLabel("Idle Timeout (sec):"), gbc);
         
         idleTimeoutSpinner = new JSpinner(new SpinnerNumberModel(idleTimeoutSec, 10, 600, 10));
-        idleTimeoutSpinner.addChangeListener(_ -> {
+        idleTimeoutSpinner.addChangeListener(e -> {
             idleTimeoutSec = (Integer) idleTimeoutSpinner.getValue();
             saveSettings();
             logMessage("Idle timeout updated to " + idleTimeoutSec + " seconds");
@@ -1655,7 +1655,7 @@ public class BurpProxyRotate implements BurpExtension {
         controlsPanel.add(new JLabel("Max Connections Per Proxy:"), gbc);
         
         maxConnectionsPerProxySpinner = new JSpinner(new SpinnerNumberModel(maxConnectionsPerProxy, 1, 500, 10));
-        maxConnectionsPerProxySpinner.addChangeListener(_ -> {
+        maxConnectionsPerProxySpinner.addChangeListener(e -> {
             maxConnectionsPerProxy = (Integer) maxConnectionsPerProxySpinner.getValue();
             saveSettings();
             logMessage("Max connections per proxy updated to " + maxConnectionsPerProxy);
@@ -1670,7 +1670,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         enableLoggingCheckbox = new JCheckBox();
         enableLoggingCheckbox.setSelected(loggingEnabled);
-        enableLoggingCheckbox.addActionListener(_ -> {
+        enableLoggingCheckbox.addActionListener(e -> {
             loggingEnabled = enableLoggingCheckbox.isSelected();
             saveSettings();
             logMessage("Logging " + (loggingEnabled ? "enabled" : "disabled"));
@@ -1688,7 +1688,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         bypassCollaboratorCheckbox = new JCheckBox();
         bypassCollaboratorCheckbox.setSelected(bypassCollaborator);
-        bypassCollaboratorCheckbox.addActionListener(_ -> {
+        bypassCollaboratorCheckbox.addActionListener(e -> {
             bypassCollaborator = bypassCollaboratorCheckbox.isSelected();
             socksProxyService.setBypassCollaborator(bypassCollaborator);
             saveSettings();
@@ -1704,7 +1704,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         proxySelectionModeComboBox = new JComboBox<>(new String[]{"Round-Robin", "Random"});
         proxySelectionModeComboBox.setSelectedItem(useRandomProxySelection ? "Random" : "Round-Robin");
-        proxySelectionModeComboBox.addActionListener(_ -> {
+        proxySelectionModeComboBox.addActionListener(e -> {
             useRandomProxySelection = proxySelectionModeComboBox.getSelectedItem().equals("Random");
             saveSettings();
             logMessage("Proxy selection mode updated to " + (useRandomProxySelection ? "Random" : "Round-Robin"));
@@ -1722,7 +1722,7 @@ public class BurpProxyRotate implements BurpExtension {
         JScrollPane bypassScrollPane = new JScrollPane(bypassDomainsTextArea);
         
         JButton updateDomainsButton = new JButton("Update Domains");
-        updateDomainsButton.addActionListener(_ -> {
+        updateDomainsButton.addActionListener(e -> {
             String domains = bypassDomainsTextArea.getText();
             updateBypassDomains(domains);
             logMessage("Bypass domains updated");
@@ -1740,7 +1740,7 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.anchor = GridBagConstraints.CENTER;
         
         JButton resetButton = new JButton("Reset to Default Settings");
-        resetButton.addActionListener(_ -> resetDefaultSettings());
+        resetButton.addActionListener(e -> resetDefaultSettings());
         
         controlsPanel.add(resetButton, gbc);
         

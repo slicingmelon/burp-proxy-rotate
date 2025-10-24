@@ -770,7 +770,7 @@ public class ProxyRotateService {
         logInfo("Fallback: Using proxy " + proxy.getProtocol() + "://" + proxyKey + 
                 " for target: " + state.targetHost + ":" + state.targetPort);
         
-        connectionsPerProxy.computeIfAbsent(proxyKey, _ -> new AtomicInteger(0)).incrementAndGet();
+        connectionsPerProxy.computeIfAbsent(proxyKey, k -> new AtomicInteger(0)).incrementAndGet();
         
         state.selectedProxy = proxy;
         
@@ -1375,7 +1375,7 @@ public class ProxyRotateService {
         logInfo("Using proxy: " + proxyProtocol + "://" + proxyKey + 
                 " for target: " + state.targetHost + ":" + state.targetPort);
         
-        connectionsPerProxy.computeIfAbsent(proxyKey, _ -> new AtomicInteger(0)).incrementAndGet();
+        connectionsPerProxy.computeIfAbsent(proxyKey, k -> new AtomicInteger(0)).incrementAndGet();
         
         state.selectedProxy = proxy;
         
