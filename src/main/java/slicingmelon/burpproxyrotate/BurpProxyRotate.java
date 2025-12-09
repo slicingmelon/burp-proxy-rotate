@@ -58,7 +58,7 @@ public class BurpProxyRotate implements BurpExtension {
     private static final String PROXY_HOST_PORT_REGEX = "^([^:]+):(\\d+)$";
     
     // Default ports for the proxy service
-    private static final int DEFAULT_LOCAL_PORT = 11420;
+    private static final int DEFAULT_LOCAL_PORT = 10420;
     private static final int DEFAULT_STANDALONE_PORT = 10421;
     
     // Configured ports
