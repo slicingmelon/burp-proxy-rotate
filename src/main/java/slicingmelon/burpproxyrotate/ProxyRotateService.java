@@ -81,7 +81,7 @@ public class ProxyRotateService {
     private String bindHost = "0.0.0.0";
     
     // Buffer pool for high-performance buffer management
-    private BufferPool bufferPool;
+    //private BufferPool bufferPool;
     
     // Connection tracking
     private final AtomicInteger activeConnectionCount = new AtomicInteger(0);

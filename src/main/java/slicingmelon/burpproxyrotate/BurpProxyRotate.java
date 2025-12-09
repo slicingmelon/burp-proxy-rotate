@@ -103,7 +103,6 @@ public class BurpProxyRotate implements BurpExtension {
     
     private javax.swing.Timer statsUpdateTimer;
     private javax.swing.Timer uiUpdateTimer;
-    private JLabel statsLabel;
     private volatile boolean uiUpdatePending = false;
 
     // default constants for ALL settings
