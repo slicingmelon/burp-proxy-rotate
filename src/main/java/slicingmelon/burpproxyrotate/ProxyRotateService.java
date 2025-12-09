@@ -27,6 +27,7 @@ import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -70,6 +71,7 @@ public class ProxyRotateService {
     private Selector selector;
     private ServerSocketChannel serverChannel;
     private ExecutorService selectorThreadPool;
+    private ScheduledExecutorService cleanupScheduler;
     private volatile boolean serverRunning = false;
     private int localPort;
     
@@ -314,18 +316,17 @@ public class ProxyRotateService {
             });
             
             // Create a scheduled thread for idle connection cleanup
-            final java.util.concurrent.ScheduledExecutorService cleanupScheduler = 
-                Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
-                    @Override
-                    public Thread newThread(Runnable r) {
-                        Thread t = new Thread(r, threadPrefix + "-Cleanup");
-                        t.setDaemon(true);
-                        
-                        // Lower priority for cleanup thread
-                        t.setPriority(Thread.MIN_PRIORITY);
-                        return t;
-                    }
-                });
+            cleanupScheduler = Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, threadPrefix + "-Cleanup");
+                    t.setDaemon(true);
+                    
+                    // Lower priority for cleanup thread
+                    t.setPriority(Thread.MIN_PRIORITY);
+                    return t;
+                }
+            });
             
             serverRunning = true;
             
@@ -382,6 +383,9 @@ public class ProxyRotateService {
             serverRunning = false;
             // Clean up any partially initialized resources
             try {
+                if (cleanupScheduler != null) {
+                    cleanupScheduler.shutdownNow();
+                }
                 if (serverChannel != null && serverChannel.isOpen()) {
                     serverChannel.close();
                 }
@@ -391,6 +395,7 @@ public class ProxyRotateService {
             } catch (IOException cleanupEx) {
                 logError("[" + serviceId + "] Error cleaning up: " + cleanupEx.getMessage());
             }
+            cleanupScheduler = null;
             onFailure.accept(e.getMessage());
         }
     }
@@ -571,6 +576,15 @@ public class ProxyRotateService {
                 }
             }
             
+            // Shutdown cleanup scheduler
+            if (cleanupScheduler != null) {
+                cleanupScheduler.shutdown();
+                cleanupScheduler.awaitTermination(5, TimeUnit.SECONDS);
+                if (!cleanupScheduler.isTerminated()) {
+                    cleanupScheduler.shutdownNow();
+                }
+            }
+            
             // Close all active connections
             synchronized (connectionStates) {
                 for (SocketChannel channel : new ArrayList<>(connectionStates.keySet())) {
@@ -601,6 +615,7 @@ public class ProxyRotateService {
             selector = null;
             serverChannel = null;
             selectorThreadPool = null;
+            cleanupScheduler = null;
         }
         
         logInfo("Burp SOCKS Rotate server stopped.");
