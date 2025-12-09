@@ -465,11 +465,11 @@ public class BurpProxyRotate implements BurpExtension {
         controlPanel.add(controlButtonPanel, gbc);
         
         // Standalone mode buttons (does NOT update Burp SOCKS settings)
-        enableStandaloneButton = new JButton("Enable Standalone");
+        enableStandaloneButton = new JButton("Enable Standalone Service");
         enableStandaloneButton.setToolTipText("Start proxy rotation on standalone port (does not modify Burp settings)");
         enableStandaloneButton.addActionListener(e -> enableStandaloneProxyRotate());
         
-        disableStandaloneButton = new JButton("Disable Standalone");
+        disableStandaloneButton = new JButton("Disable Standalone Service");
         disableStandaloneButton.setToolTipText("Stop standalone proxy rotation service");
         disableStandaloneButton.addActionListener(e -> disableStandaloneProxyRotate());
         disableStandaloneButton.setEnabled(false);
