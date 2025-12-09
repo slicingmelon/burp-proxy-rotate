@@ -111,7 +111,7 @@ public class BurpProxyRotate implements BurpExtension {
     private static final int DEFAULT_MAX_CONNECTIONS_PER_PROXY = 50;
     private static final boolean DEFAULT_LOGGING_ENABLED = false;
     private static final boolean DEFAULT_BYPASS_COLLABORATOR = true;
-    private static final boolean DEFAULT_RANDOM_PROXY_SELECTION = true;
+    private static final boolean DEFAULT_RANDOM_PROXY_SELECTION = false;
 
     @Override
     public void initialize(MontoyaApi api) {
