@@ -70,6 +70,7 @@ public class BurpProxyRotate implements BurpExtension {
     // Standalone mode service
     private ProxyRotateService standaloneProxyService;
     private boolean standaloneRunning = false;
+    private boolean standaloneStarting = false;
     
     // Settings with defaults
     private int bufferSize = DEFAULT_BUFFER_SIZE;
@@ -999,7 +1000,7 @@ public class BurpProxyRotate implements BurpExtension {
      * Enables the standalone proxy rotate service (does NOT modify Burp SOCKS settings)
      */
     private void enableStandaloneProxyRotate() {
-        if (standaloneRunning) {
+        if (standaloneStarting || standaloneRunning) {
             logMessage("Standalone proxy rotate service is already running");
             return;
         }
@@ -1014,7 +1015,11 @@ public class BurpProxyRotate implements BurpExtension {
             logMessage("Cannot start standalone service: No proxies available");
             return;
         }
-
+        
+        // Prevent rapid re-entry while validation/startup in progress
+        standaloneStarting = true;
+        updateServerButtons();
+        
         // Validate all proxies, then start the standalone service
         validateAllProxies(() -> {
             // Check if we have at least one active proxy after validation
@@ -1040,6 +1045,8 @@ public class BurpProxyRotate implements BurpExtension {
                             JOptionPane.WARNING_MESSAGE
                     );
                     logMessage("Cannot start standalone service: No active proxies available");
+                    standaloneStarting = false;
+                    updateServerButtons();
                 });
                 return;
             }
@@ -1085,6 +1092,7 @@ public class BurpProxyRotate implements BurpExtension {
                 () -> {
                     SwingUtilities.invokeLater(() -> {
                         standaloneRunning = true;
+                        standaloneStarting = false;
                         
                         // Update UI - note: we do NOT update Burp SOCKS settings
                         standaloneStatusLabel.setText("Standalone: Running on 127.0.0.1:" + portToUse);
@@ -1098,6 +1106,7 @@ public class BurpProxyRotate implements BurpExtension {
                     SwingUtilities.invokeLater(() -> {
                         standaloneStatusLabel.setText("Standalone: Failed to start");
                         standaloneRunning = false;
+                        standaloneStarting = false;
                         updateServerButtons();
                         JOptionPane.showMessageDialog(
                                 null,
@@ -1127,6 +1136,7 @@ public class BurpProxyRotate implements BurpExtension {
             }
             
             standaloneRunning = false;
+            standaloneStarting = false;
             
             // Update UI
             if (standaloneStatusLabel != null) {
@@ -1137,6 +1147,7 @@ public class BurpProxyRotate implements BurpExtension {
         } catch (Exception ex) {
             logMessage("Error stopping standalone proxy service: " + ex.getMessage());
             standaloneRunning = false;
+            standaloneStarting = false;
             
             updateServerButtons();
             
@@ -1154,7 +1165,7 @@ public class BurpProxyRotate implements BurpExtension {
     private void updateServerButtons() {
         SwingUtilities.invokeLater(() -> {
             boolean mainRunning = socksProxyService != null && socksProxyService.isRunning();
-            boolean anyServiceRunning = mainRunning || standaloneRunning;
+            boolean anyServiceRunning = mainRunning || standaloneRunning || standaloneStarting;
             
             if (enableButton != null && disableButton != null) {
                 // Can only enable main if nothing is running
@@ -1192,6 +1203,7 @@ public class BurpProxyRotate implements BurpExtension {
         if (standaloneProxyService != null || standaloneRunning) {
             disableStandaloneProxyRotate();
         }
+        standaloneStarting = false;
         
         // Reset Burp's SOCKS proxy settings to ensure clean state
         resetBurpSocksSettings();
