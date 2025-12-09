@@ -50,6 +50,8 @@ public class BurpProxyRotate implements BurpExtension {
     private JButton enableStandaloneButton;
     private JButton disableStandaloneButton;
     private JLabel standaloneStatusLabel;
+    private JSpinner portSpinner;
+    private JSpinner standalonePortSpinner;
     private JLabel statusLabel;
     
     // Validate proxies
@@ -394,7 +396,7 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridwidth = 1;
         controlPanel.add(new JLabel("Local port:"), gbc);
         
-        JSpinner portSpinner = new JSpinner(new SpinnerNumberModel(
+        portSpinner = new JSpinner(new SpinnerNumberModel(
                 configuredLocalPort, 1024, 65535, 1));
         
         portSpinner.addChangeListener(e -> {
@@ -418,7 +420,7 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridwidth = 1;
         controlPanel.add(new JLabel("Standalone port:"), gbc);
         
-        JSpinner standalonePortSpinner = new JSpinner(new SpinnerNumberModel(
+        standalonePortSpinner = new JSpinner(new SpinnerNumberModel(
                 configuredStandalonePort, 1024, 65535, 1));
         
         standalonePortSpinner.addChangeListener(e -> {
@@ -1169,14 +1171,24 @@ public class BurpProxyRotate implements BurpExtension {
      */
     private void updateServerButtons() {
         SwingUtilities.invokeLater(() -> {
+            boolean mainRunning = socksProxyService != null && socksProxyService.isRunning();
+            boolean anyServiceRunning = mainRunning || standaloneRunning;
+            
             if (enableButton != null && disableButton != null) {
-                boolean running = socksProxyService != null && socksProxyService.isRunning();
-                enableButton.setEnabled(!running);
-                disableButton.setEnabled(running);
+                enableButton.setEnabled(!mainRunning);
+                disableButton.setEnabled(mainRunning);
             }
             if (enableStandaloneButton != null && disableStandaloneButton != null) {
                 enableStandaloneButton.setEnabled(!standaloneRunning);
                 disableStandaloneButton.setEnabled(standaloneRunning);
+            }
+            
+            // Disable port spinners when any service is running
+            if (portSpinner != null) {
+                portSpinner.setEnabled(!anyServiceRunning);
+            }
+            if (standalonePortSpinner != null) {
+                standalonePortSpinner.setEnabled(!anyServiceRunning);
             }
         });
     }
