@@ -131,3 +131,7 @@ The extension provides a user-friendly interface with two main tabs:
 
 -   Displays real-time logs from the extension, including connection attempts, proxy selections, errors, and status changes.
 
+
+## Changelog
+
+See full changelog [CHANGELOG](./CHANGELOG.md).
