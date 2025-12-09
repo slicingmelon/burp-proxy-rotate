@@ -290,11 +290,17 @@ public class ProxyRotateService {
             
             // Verify the socket is actually bound
             if (!serverChannel.socket().isBound()) {
+                if (logging != null) {
+                    logging.logToError("[" + serviceId + "] Socket failed to bind to port " + localPort);
+                }
                 throw new IOException("Socket failed to bind to port " + localPort);
             }
             
             int actualPort = serverChannel.socket().getLocalPort();
             if (actualPort != localPort) {
+                if (logging != null) {
+                    logging.logToError("[" + serviceId + "] Socket bound to wrong port: expected " + localPort + ", got " + actualPort);
+                }
                 throw new IOException("Socket bound to wrong port: expected " + localPort + ", got " + actualPort);
             }
             

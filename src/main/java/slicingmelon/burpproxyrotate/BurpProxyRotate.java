@@ -131,7 +131,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         socksProxyService.setBypassCollaborator(bypassCollaborator);
         
-        socksProxyService.setLoggingEnabled(loggingEnabled);
+        socksProxyService.setLoggingEnabled(verboseLoggingEnabled);
 
         // Create and register the UI
         SwingUtilities.invokeLater(() -> {
@@ -372,7 +372,7 @@ public class BurpProxyRotate implements BurpExtension {
         api.persistence().preferences().setString(BUFFER_SIZE_KEY, String.valueOf(bufferSize));
         api.persistence().preferences().setString(IDLE_TIMEOUT_KEY, String.valueOf(idleTimeoutSec));
         api.persistence().preferences().setString(MAX_CONNECTIONS_PER_PROXY_KEY, String.valueOf(maxConnectionsPerProxy));
-        api.persistence().preferences().setString(LOGGING_ENABLED_KEY, String.valueOf(loggingEnabled));
+        api.persistence().preferences().setString(LOGGING_ENABLED_KEY, String.valueOf(verboseLoggingEnabled));
         api.persistence().preferences().setString(BYPASS_COLLABORATOR_KEY, String.valueOf(bypassCollaborator));
         api.persistence().preferences().setString(PROXY_SELECTION_MODE_KEY, String.valueOf(useRandomProxySelection));
     }
@@ -643,7 +643,7 @@ public class BurpProxyRotate implements BurpExtension {
                         if (!exists) {
                             proxiesToAdd.add(proxy);
                         } else {
-                            logMessage("Skipping duplicate proxy: " + proxy.getProtocol() + "://" + proxy.getHost() + ":" + proxy.getPort());
+                            logVerboseMsg("Skipping duplicate proxy: " + proxy.getProtocol() + "://" + proxy.getHost() + ":" + proxy.getPort());
                         }
                     } else {
                         invalidLines.add(line);
@@ -680,9 +680,9 @@ public class BurpProxyRotate implements BurpExtension {
                 bulkTextArea.setText("");
                 updateProxyTable();
                 saveProxies();
-                logMessage("Added " + added + " new proxies from bulk input.");
+                logVerboseMsg("Added " + added + " new proxies from bulk input.");
             } else {
-                logMessage("No new proxies were added from bulk input.");
+                logVerboseMsg("No new proxies were added from bulk input.");
             }
         });
         
@@ -813,10 +813,10 @@ public class BurpProxyRotate implements BurpExtension {
             api.burpSuite().importUserOptionsFromJson(useProxyJson);
             api.burpSuite().importUserOptionsFromJson(useDnsJson);
             
-            logMessage("Burp SOCKS proxy settings updated: " + (useProxy ? "enabled" : "disabled") + 
-                      (useProxy ? ", using localhost:" + port : ""));
+            logOutput("[INFO] Burp SOCKS proxy settings updated: " + (useProxy ? "enabled" : "disabled") + 
+                      (useProxy ? ", using " + host + ":" + port : ""));
         } catch (Exception e) {
-            logMessage("Error updating Burp SOCKS settings: " + e.getMessage());
+            logErrorOutput("Error updating Burp SOCKS settings: " + e.getMessage());
         }
     }
     
@@ -837,9 +837,9 @@ public class BurpProxyRotate implements BurpExtension {
             api.burpSuite().importUserOptionsFromJson(resetPortJson);
             api.burpSuite().importUserOptionsFromJson(resetDnsJson);
             
-            logMessage("Burp SOCKS proxy settings reset to default (disabled)");
+            logOutput("[INFO] Burp SOCKS proxy settings reset to default (disabled)");
         } catch (Exception e) {
-            logMessage("Error resetting Burp SOCKS settings: " + e.getMessage());
+            logErrorOutput("Error resetting Burp SOCKS settings: " + e.getMessage());
         }
     }
     
@@ -849,7 +849,7 @@ public class BurpProxyRotate implements BurpExtension {
      */
     private void enableProxyRotate() {
         if (socksProxyService != null && socksProxyService.isRunning()) {
-            logMessage("Burp Proxy Rotate service is already running");
+            logOutput("[INFO] Burp Proxy Rotate service is already running");
             return;
         }
         
@@ -860,7 +860,7 @@ public class BurpProxyRotate implements BurpExtension {
                     "No Proxies Available",
                     JOptionPane.WARNING_MESSAGE
             );
-            logMessage("Cannot start Burp Proxy Rotate extension: No proxies available");
+            logOutput("[INFO] Cannot start Burp Proxy Rotate extension: No proxies available");
             return;
         }
 
@@ -888,7 +888,7 @@ public class BurpProxyRotate implements BurpExtension {
                             "No Active Proxies",
                             JOptionPane.WARNING_MESSAGE
                     );
-                    logMessage("Cannot start Burp Proxy Rotate service: No active proxies available");
+                    logOutput("[INFO] Cannot start Burp Proxy Rotate service: No active proxies available");
                 });
                 return;
             }
@@ -940,7 +940,7 @@ public class BurpProxyRotate implements BurpExtension {
                         statusLabel.setText("Status: Running on " + bindHost + ":" + portToUse);
                         updateServerButtons();
                         
-                        logMessage("SOCKS Rotate service started on " + bindHost + ":" + portToUse);
+                        logOutput("[INFO] SOCKS Rotate service started on " + bindHost + ":" + portToUse);
                     });
                 },
                 // Failure callback
@@ -954,7 +954,7 @@ public class BurpProxyRotate implements BurpExtension {
                                 "Service Error",
                                 JOptionPane.ERROR_MESSAGE
                         );
-                        logMessage("Failed to start SOCKS Rotate service: " + errorMessage);
+                        logErrorOutput("Failed to start SOCKS Rotate service: " + errorMessage);
                     });
                 }
         );
@@ -965,13 +965,13 @@ public class BurpProxyRotate implements BurpExtension {
      */
     private void disableProxyRotate() {
         try {
-            logMessage("Stopping Burp Proxy Rotate service...");
+            logOutput("[INFO] Stopping Burp Proxy Rotate service...");
             
             if (socksProxyService != null && socksProxyService.isRunning()) {
                 socksProxyService.stop();
-                logMessage("SOCKS Rotate service stopped");
+                logOutput("[INFO] SOCKS Rotate service stopped");
             } else {
-                logMessage("Burp Proxy Rotate service was not running");
+                logOutput("[INFO] Burp Proxy Rotate service was not running");
             }
             
             // Always reset Burp's SOCKS proxy settings, regardless of service state
@@ -984,13 +984,13 @@ public class BurpProxyRotate implements BurpExtension {
             updateServerButtons();
             
         } catch (Exception ex) {
-            logMessage("Error stopping SOCKS Rotate service: " + ex.getMessage());
+            logErrorOutput("Error stopping SOCKS Rotate service: " + ex.getMessage());
             
             // Still try to reset the SOCKS proxy settings even if there was an error
             try {
                 resetBurpSocksSettings();
             } catch (Exception resetEx) {
-                logMessage("Error resetting SOCKS proxy settings: " + resetEx.getMessage());
+                logErrorOutput("Error resetting SOCKS proxy settings: " + resetEx.getMessage());
             }
             
             updateServerButtons();
@@ -1007,7 +1007,7 @@ public class BurpProxyRotate implements BurpExtension {
      */
     private void enableStandaloneProxyRotate() {
         if (standaloneStarting || standaloneRunning) {
-            logMessage("Standalone proxy rotate service is already running");
+            logOutput("[INFO] Standalone proxy rotate service is already running");
             return;
         }
         
@@ -1018,7 +1018,7 @@ public class BurpProxyRotate implements BurpExtension {
                     "No Proxies Available",
                     JOptionPane.WARNING_MESSAGE
             );
-            logMessage("Cannot start standalone service: No proxies available");
+            logOutput("[INFO] Cannot start standalone service: No proxies available");
             return;
         }
         
@@ -1050,7 +1050,7 @@ public class BurpProxyRotate implements BurpExtension {
                             "No Active Proxies",
                             JOptionPane.WARNING_MESSAGE
                     );
-                    logMessage("Cannot start standalone service: No active proxies available");
+                    logOutput("[INFO] Cannot start standalone service: No active proxies available");
                     standaloneStarting = false;
                     updateServerButtons();
                 });
@@ -1095,7 +1095,7 @@ public class BurpProxyRotate implements BurpExtension {
             }
             
             standaloneProxyService.setUseRandomProxySelection(useRandomProxySelection);
-            standaloneProxyService.setLoggingEnabled(loggingEnabled);
+            standaloneProxyService.setLoggingEnabled(verboseLoggingEnabled);
             
             // Start the standalone proxy service (NO Burp settings update)
             standaloneProxyService.start(portToUse, 
@@ -1109,7 +1109,7 @@ public class BurpProxyRotate implements BurpExtension {
                             standaloneStatusLabel.setText("Standalone: Running on " + bindHost + ":" + portToUse);
                             updateServerButtons();
                             
-                            logMessage("Standalone proxy rotate service started on " + bindHost + ":" + portToUse + " (Burp settings NOT modified)");
+                            logOutput("[INFO] Standalone proxy rotate service started on " + bindHost + ":" + portToUse + " (Burp settings NOT modified)");
                         });
                     },
                     // Failure callback
@@ -1126,7 +1126,7 @@ public class BurpProxyRotate implements BurpExtension {
                                     "Service Error",
                                     JOptionPane.ERROR_MESSAGE
                             );
-                            logMessage("Failed to start standalone proxy service: " + errorMessage);
+                            logErrorOutput("Failed to start standalone proxy service: " + errorMessage);
                         });
                     }
             );
@@ -1134,7 +1134,7 @@ public class BurpProxyRotate implements BurpExtension {
             // If preparation fails before start() registers callbacks, reset flags and notify
             standaloneRunning = false;
             standaloneStarting = false;
-            logMessage("Failed to start standalone proxy service: " + ex.getMessage());
+            logErrorOutput("Failed to start standalone proxy service: " + ex.getMessage());
             standaloneStatusLabel.setText("Standalone: Failed to start");
             updateServerButtons();
             JOptionPane.showMessageDialog(
@@ -1152,13 +1152,13 @@ public class BurpProxyRotate implements BurpExtension {
      */
     private void disableStandaloneProxyRotate() {
         try {
-            logMessage("Stopping standalone proxy rotate service...");
+            logOutput("[INFO] Stopping standalone proxy rotate service...");
             
             if (standaloneProxyService != null && standaloneProxyService.isRunning()) {
                 standaloneProxyService.stop();
-                logMessage("Standalone proxy rotate service stopped");
+                logOutput("[INFO] Standalone proxy rotate service stopped");
             } else {
-                logMessage("Standalone proxy rotate service was not running");
+                logOutput("[INFO] Standalone proxy rotate service was not running");
             }
             
             standaloneRunning = false;
@@ -1171,7 +1171,7 @@ public class BurpProxyRotate implements BurpExtension {
             updateServerButtons();
             
         } catch (Exception ex) {
-            logMessage("Error stopping standalone proxy service: " + ex.getMessage());
+            logErrorOutput("Error stopping standalone proxy service: " + ex.getMessage());
             standaloneRunning = false;
             standaloneStarting = false;
             
@@ -1218,7 +1218,7 @@ public class BurpProxyRotate implements BurpExtension {
      * Shut down
      */
     private void shutdown() {
-        logMessage("Extension unloading. Stopping proxy services...");
+        logOutput("[INFO] Extension unloading. Stopping proxy services...");
          
         // Stop main proxy service
         if (socksProxyService != null) {
@@ -1235,7 +1235,7 @@ public class BurpProxyRotate implements BurpExtension {
         resetBurpSocksSettings();
         
         saveProxies();
-        logMessage("Burp Proxy Rotate extension shut down.");
+        logOutput("[INFO] Burp Proxy Rotate extension shut down.");
 
         if (statsUpdateTimer != null && statsUpdateTimer.isRunning()) {
             statsUpdateTimer.stop();
@@ -1259,7 +1259,7 @@ public class BurpProxyRotate implements BurpExtension {
                 proxyList.add(proxy);
                 added = true;
             } else {
-                logMessage("Proxy " + proxy.getHost() + ":" + proxy.getPort() + " already exists.");
+                logVerboseMsg("Proxy " + proxy.getHost() + ":" + proxy.getPort() + " already exists.");
             }
         } finally {
             proxyListLock.writeLock().unlock();
@@ -1268,7 +1268,7 @@ public class BurpProxyRotate implements BurpExtension {
         if (added) {
             updateProxyTable();
             saveProxies();
-            logMessage("Added proxy: " + proxy.getHost() + ":" + proxy.getPort());
+            logOutput("[INFO] Added proxy: " + proxy.getHost() + ":" + proxy.getPort());
         }
     }
     
@@ -1289,7 +1289,7 @@ public class BurpProxyRotate implements BurpExtension {
         if (removed != null) {
             updateProxyTable();
             saveProxies();
-            logMessage("Removed proxy: " + removed.getHost() + ":" + removed.getPort());
+            logOutput("[INFO] Removed proxy: " + removed.getHost() + ":" + removed.getPort());
         }
     }
     
@@ -1309,7 +1309,7 @@ public class BurpProxyRotate implements BurpExtension {
         if (count > 0) {
             updateProxyTable();
             saveProxies();
-            logMessage("Cleared all " + count + " proxies.");
+            logOutput("[INFO] Cleared all " + count + " proxies.");
         }
     }
     
@@ -1352,12 +1352,6 @@ public class BurpProxyRotate implements BurpExtension {
     private void logErrorOutput(String message) {
         if (api != null && api.logging() != null) {
             api.logging().logToError(message);
-        }
-        if (logTextArea != null) {
-            SwingUtilities.invokeLater(() -> {
-                logTextArea.append("[ERROR] " + message + "\n");
-                logTextArea.setCaretPosition(logTextArea.getDocument().getLength());
-            });
         }
     }
     
@@ -1502,7 +1496,7 @@ public class BurpProxyRotate implements BurpExtension {
             final int[] activeCount = new int[1];
             final int[] completedCount = new int[1];
             
-            logMessage("Starting validation for " + total + " proxies...");
+            logVerboseMsg("Starting validation for " + total + " proxies...");
             
             ExecutorService validationPool = Executors.newFixedThreadPool(
                 Math.min(10, Runtime.getRuntime().availableProcessors()));
@@ -1526,7 +1520,7 @@ public class BurpProxyRotate implements BurpExtension {
                             }
                         }
                     } catch (Exception e) {
-                        logMessage("Error validating proxy " + proxy.getHost() + ":" + proxy.getPort() + 
+                        logErrorOutput("Error validating proxy " + proxy.getHost() + ":" + proxy.getPort() + 
                                   " - " + e.getMessage());
                         proxy.setActive(false);
                         proxy.setErrorMessage("Validation error: " + e.getMessage());
@@ -1569,7 +1563,7 @@ public class BurpProxyRotate implements BurpExtension {
      * Validate a single proxy
      */
     private boolean validateProxy(ProxyEntry proxy, int maxAttempts) {
-        logMessage("Validating proxy: " + proxy.getProtocol() + "://" + 
+        logVerboseMsg("Validating proxy: " + proxy.getProtocol() + "://" + 
                   (proxy.isAuthenticated() ? proxy.getUsername() + ":***@" : "") + 
                   proxy.getHost() + ":" + proxy.getPort());
         proxy.setErrorMessage("Validating...");
@@ -1617,21 +1611,21 @@ public class BurpProxyRotate implements BurpExtension {
                         String response = new String(buffer, 0, bytesRead);
                         if (response.contains("200") || response.contains("HTTP/1.1 200")) {
                             // Success - 200 response
-                            logMessage("HTTP proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
+                            logVerboseMsg("HTTP proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
                             success = true;
                             finalErrorMessage = "";
                             break;
                         } else if (response.contains("407")) {
                             // Authentication required but not provided, or invalid
                             finalErrorMessage = "Authentication required or invalid";
-                            logMessage("HTTP proxy requires authentication: " + proxy.getHost() + ":" + proxy.getPort());
+                            logVerboseMsg("HTTP proxy requires authentication: " + proxy.getHost() + ":" + proxy.getPort());
                             if (!proxy.isAuthenticated()) {
                                 break;
                             }
                         } else {
                             // Other error
                             finalErrorMessage = "HTTP proxy error: " + response.split("\r\n")[0];
-                            logMessage("HTTP proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
+                            logErrorOutput("HTTP proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
                                      " - " + finalErrorMessage);
                             break;
                         }
@@ -1660,7 +1654,7 @@ public class BurpProxyRotate implements BurpExtension {
                             // Successful handshake
                             if (response[1] == 0x00) {
                                 // No auth required
-                                logMessage("SOCKS5 proxy validated successfully (no auth): " + proxy.getHost() + ":" + proxy.getPort());
+                                logVerboseMsg("SOCKS5 proxy validated successfully (no auth): " + proxy.getHost() + ":" + proxy.getPort());
                                 success = true;
                                 finalErrorMessage = "";
                                 break;
@@ -1686,32 +1680,32 @@ public class BurpProxyRotate implements BurpExtension {
                                 
                                 if (bytesRead == 2 && authResponse[0] == 0x01 && authResponse[1] == 0x00) {
                                     // Auth successful
-                                    logMessage("SOCKS5 proxy validated successfully (with auth): " + proxy.getHost() + ":" + proxy.getPort());
+                                    logVerboseMsg("SOCKS5 proxy validated successfully (with auth): " + proxy.getHost() + ":" + proxy.getPort());
                                     success = true;
                                     finalErrorMessage = "";
                                     break;
                                 } else {
                                     finalErrorMessage = "Authentication failed";
-                                    logMessage("SOCKS5 authentication failed: " + proxy.getHost() + ":" + proxy.getPort());
+                                    logErrorOutput("SOCKS5 authentication failed: " + proxy.getHost() + ":" + proxy.getPort());
                                     break;
                                 }
                             } else if (response[1] == 0x02 && !proxy.isAuthenticated()) {
                                 finalErrorMessage = "Proxy requires authentication";
-                                logMessage("SOCKS5 proxy requires authentication: " + proxy.getHost() + ":" + proxy.getPort());
+                                logVerboseMsg("SOCKS5 proxy requires authentication: " + proxy.getHost() + ":" + proxy.getPort());
                                 break;
                             } else {
                                 finalErrorMessage = "Unsupported authentication method: " + response[1];
-                                logMessage("SOCKS5 proxy returned unsupported auth method: " + response[1]);
+                                logErrorOutput("SOCKS5 proxy returned unsupported auth method: " + response[1]);
                                 break;
                             }
                         } else if (bytesRead > 0 && response[0] == 'H') {
                             finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
-                            logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
+                            logErrorOutput("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
                                      " - " + finalErrorMessage);
                             break;
                         } else {
                             finalErrorMessage = "Invalid SOCKS5 response";
-                            logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+                            logVerboseMsg("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
                         }
                     } else if (protocolVersion == 4) {
                         // SOCKS4 doesn't have a simple handshake we can use to just test the connection
@@ -1733,18 +1727,18 @@ public class BurpProxyRotate implements BurpExtension {
                         
                         // verify we get a SOCKS4 response
                         if (bytesRead == 8 && response[0] == 0x00) {
-                            logMessage("SOCKS4 proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
+                            logVerboseMsg("SOCKS4 proxy validated successfully: " + proxy.getHost() + ":" + proxy.getPort());
                             success = true;
                             finalErrorMessage = "";
                             break;
                         } else if (bytesRead > 0 && response[0] == 'H') {
                             finalErrorMessage = "Not a SOCKS proxy (received HTTP response)";
-                            logMessage("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
+                            logErrorOutput("Proxy validation failed: " + proxy.getHost() + ":" + proxy.getPort() + 
                                      " - " + finalErrorMessage);
                             break;
                         } else {
                             finalErrorMessage = "Invalid SOCKS4 response";
-                            logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+                            logVerboseMsg("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
                         }
                     }
                 }
@@ -1753,7 +1747,7 @@ public class BurpProxyRotate implements BurpExtension {
                 if (finalErrorMessage == null || finalErrorMessage.isEmpty()) {
                     finalErrorMessage = e.getClass().getSimpleName();
                 }
-                logMessage("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
+                logVerboseMsg("Attempt " + attempt + "/" + maxAttempts + " failed: " + finalErrorMessage);
             } finally {
                 if (socket != null) {
                     try { socket.close(); } catch (IOException e) { /* pass */ }
@@ -1847,7 +1841,7 @@ public class BurpProxyRotate implements BurpExtension {
                     if (proxy.getHost().equals(host) && proxy.getPort() == port) {
                         proxy.setActive(false);
                         proxy.setErrorMessage(errorMessage != null ? errorMessage : "Connection failed");
-                        logMessage("Proxy marked inactive: " + host + ":" + port + " - " + proxy.getErrorMessage());
+                        logVerboseMsg("Proxy marked inactive: " + host + ":" + port + " - " + proxy.getErrorMessage());
                         break;
                     }
                 }
@@ -1869,7 +1863,7 @@ public class BurpProxyRotate implements BurpExtension {
                     if (proxy.getHost().equals(host) && proxy.getPort() == port && !proxy.isActive()) {
                         proxy.setActive(true);
                         proxy.setErrorMessage("");
-                        logMessage("Proxy reactivated: " + host + ":" + port);
+                        logVerboseMsg("Proxy reactivated: " + host + ":" + port);
                         break;
                     }
                 }
@@ -1902,7 +1896,7 @@ public class BurpProxyRotate implements BurpExtension {
         bufferSizeSpinner.addChangeListener(e -> {
             bufferSize = (Integer) bufferSizeSpinner.getValue();
             saveSettings();
-            logMessage("Buffer size updated to " + bufferSize + " bytes");
+            logVerboseMsg("Buffer size updated to " + bufferSize + " bytes");
         });
         
         gbc.gridx = 1;
@@ -1916,7 +1910,7 @@ public class BurpProxyRotate implements BurpExtension {
         idleTimeoutSpinner.addChangeListener(e -> {
             idleTimeoutSec = (Integer) idleTimeoutSpinner.getValue();
             saveSettings();
-            logMessage("Idle timeout updated to " + idleTimeoutSec + " seconds");
+            logVerboseMsg("Idle timeout updated to " + idleTimeoutSec + " seconds");
         });
         
         gbc.gridx = 1;
@@ -1964,7 +1958,7 @@ public class BurpProxyRotate implements BurpExtension {
             bypassCollaborator = bypassCollaboratorCheckbox.isSelected();
             socksProxyService.setBypassCollaborator(bypassCollaborator);
             saveSettings();
-            logMessage("Bypass Collaborator " + (bypassCollaborator ? "enabled" : "disabled"));
+            logVerboseMsg("Bypass Collaborator " + (bypassCollaborator ? "enabled" : "disabled"));
         });
         
         gbc.gridx = 1;
@@ -1979,7 +1973,7 @@ public class BurpProxyRotate implements BurpExtension {
         proxySelectionModeComboBox.addActionListener(e -> {
             useRandomProxySelection = proxySelectionModeComboBox.getSelectedItem().equals("Random");
             saveSettings();
-            logMessage("Proxy selection mode updated to " + (useRandomProxySelection ? "Random" : "Round-Robin"));
+            logVerboseMsg("Proxy selection mode updated to " + (useRandomProxySelection ? "Random" : "Round-Robin"));
         });
         
         gbc.gridx = 1;
@@ -1997,7 +1991,7 @@ public class BurpProxyRotate implements BurpExtension {
         updateDomainsButton.addActionListener(e -> {
             String domains = bypassDomainsTextArea.getText();
             updateBypassDomains(domains);
-            logMessage("Bypass domains updated");
+            logVerboseMsg("Bypass domains updated");
         });
         
         bypassPanel.add(bypassScrollPane, BorderLayout.CENTER);
@@ -2030,14 +2024,14 @@ public class BurpProxyRotate implements BurpExtension {
         bufferSize = DEFAULT_BUFFER_SIZE;
         idleTimeoutSec = DEFAULT_IDLE_TIMEOUT;
         maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
-        loggingEnabled = DEFAULT_LOGGING_ENABLED;
+        verboseLoggingEnabled = DEFAULT_LOGGING_ENABLED;
         bypassCollaborator = DEFAULT_BYPASS_COLLABORATOR;
         useRandomProxySelection = DEFAULT_RANDOM_PROXY_SELECTION;
         
         bufferSizeSpinner.setValue(bufferSize);
         idleTimeoutSpinner.setValue(idleTimeoutSec);
         maxConnectionsPerProxySpinner.setValue(maxConnectionsPerProxy);
-        enableLoggingCheckbox.setSelected(loggingEnabled);
+        enableLoggingCheckbox.setSelected(verboseLoggingEnabled);
         bypassCollaboratorCheckbox.setSelected(bypassCollaborator);
         proxySelectionModeComboBox.setSelectedItem(useRandomProxySelection ? "Random" : "Round-Robin");
         
@@ -2047,14 +2041,14 @@ public class BurpProxyRotate implements BurpExtension {
         
         saveSettings();
         
-        logMessage("All settings reset to defaults");
+        logOutput("[INFO] All settings reset to defaults");
         
         SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(null, 
             "Settings have been reset to default values:\n\n" +
             "• Buffer Size: " + bufferSize + " bytes\n" +
             "• Idle Timeout: " + idleTimeoutSec + " seconds\n" +
             "• Max Connections Per Proxy: " + maxConnectionsPerProxy + "\n" +
-            "• Logging: " + (loggingEnabled ? "Enabled" : "Disabled") + "\n" +
+            "• Logging: " + (verboseLoggingEnabled ? "Enabled" : "Disabled") + "\n" +
             "• Bypass Collaborator: " + (bypassCollaborator ? "Enabled" : "Disabled") + "\n" +
             "• Proxy Selection: " + (useRandomProxySelection ? "Random" : "Round-Robin"),
             "Settings Reset", 
