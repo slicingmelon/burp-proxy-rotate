@@ -76,7 +76,7 @@ public class BurpProxyRotate implements BurpExtension {
     private int bufferSize = DEFAULT_BUFFER_SIZE;
     private int idleTimeoutSec = DEFAULT_IDLE_TIMEOUT;
     private int maxConnectionsPerProxy = DEFAULT_MAX_CONNECTIONS_PER_PROXY;
-    private boolean loggingEnabled = DEFAULT_LOGGING_ENABLED;
+    private boolean verboseLoggingEnabled = DEFAULT_LOGGING_ENABLED;
     private boolean bypassCollaborator = DEFAULT_BYPASS_COLLABORATOR;
     private boolean useRandomProxySelection = DEFAULT_RANDOM_PROXY_SELECTION;
     
@@ -142,7 +142,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         api.extension().registerUnloadingHandler(this::shutdown);
         
-        logMessage("Burp Proxy Rotate extension loaded successfully");
+        logOutput("Burp Proxy Rotate extension loaded successfully");
     }
     
     /**
@@ -197,7 +197,7 @@ public class BurpProxyRotate implements BurpExtension {
                                 proxyListLock.writeLock().unlock();
                             }
                             
-                            logMessage("Loaded proxy: " + protocol + "://" + 
+                            logVerboseMsg("Loaded proxy: " + protocol + "://" + 
                                       (username != null ? "[authenticated]@" : "") + 
                                       host + ":" + port);
                         }
@@ -216,12 +216,12 @@ public class BurpProxyRotate implements BurpExtension {
                                     proxyListLock.writeLock().unlock();
                                 }
                                 
-                                logMessage("Loaded legacy proxy: socks5://" + host + ":" + port);
+                                logVerboseMsg("Loaded legacy proxy: socks5://" + host + ":" + port);
                             }
                         }
                     }
                 } catch (Exception e) {
-                    logMessage("Skipped invalid proxy entry: " + proxy + " (" + e.getMessage() + ")");
+                    logVerboseMsg("Skipped invalid proxy entry: " + proxy + " (" + e.getMessage() + ")");
                 }
             }
         }
@@ -280,7 +280,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         String loggingEnabledSetting = api.persistence().preferences().getString(LOGGING_ENABLED_KEY);
         if (loggingEnabledSetting != null) {
-            loggingEnabled = Boolean.parseBoolean(loggingEnabledSetting);
+            verboseLoggingEnabled = Boolean.parseBoolean(loggingEnabledSetting);
         }
         
         String bypassCollaboratorSetting = api.persistence().preferences().getString(BYPASS_COLLABORATOR_KEY);
@@ -1323,16 +1323,39 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Log a message to both the UI and Burp's output
+     * Verbose-only logging to Burp output
      */
-    private void logMessage(String message) {
-        if (api != null && api.logging() != null && loggingEnabled) {
+    private void logVerboseMsg(String message) {
+        if (verboseLoggingEnabled && api != null && api.logging() != null) {
+            api.logging().logToOutput("[VERBOSE] " + message);
+        }
+    }
+
+    /**
+     * Essential info logging (output + UI)
+     */
+    private void logOutput(String message) {
+        if (api != null && api.logging() != null) {
             api.logging().logToOutput(message);
         }
-        
         if (logTextArea != null) {
             SwingUtilities.invokeLater(() -> {
                 logTextArea.append(message + "\n");
+                logTextArea.setCaretPosition(logTextArea.getDocument().getLength());
+            });
+        }
+    }
+
+    /**
+     * Error logging (output + UI)
+     */
+    private void logErrorOutput(String message) {
+        if (api != null && api.logging() != null) {
+            api.logging().logToError(message);
+        }
+        if (logTextArea != null) {
+            SwingUtilities.invokeLater(() -> {
+                logTextArea.append("[ERROR] " + message + "\n");
                 logTextArea.setCaretPosition(logTextArea.getDocument().getLength());
             });
         }
@@ -1499,7 +1522,7 @@ public class BurpProxyRotate implements BurpExtension {
                             completedCount[0]++;
                             if (completedCount[0] % 5 == 0 || completedCount[0] == total) {
                                 updateProxyTable();
-                                logMessage("Proxy validation progress: " + completedCount[0] + "/" + total + " completed");
+            logVerboseMsg("Proxy validation progress: " + completedCount[0] + "/" + total + " completed");
                             }
                         }
                     } catch (Exception e) {
@@ -1525,7 +1548,7 @@ public class BurpProxyRotate implements BurpExtension {
             }
             
             final int finalActiveCount = activeCount[0];
-            logMessage("Validation complete. " + finalActiveCount + " of " + total + " proxies are active.");
+        logVerboseMsg("Validation complete. " + finalActiveCount + " of " + total + " proxies are active.");
             
             // If this was triggered from the validate button (not from enableProxyRotate)
             if (callback == null) {
@@ -1907,7 +1930,7 @@ public class BurpProxyRotate implements BurpExtension {
         maxConnectionsPerProxySpinner.addChangeListener(e -> {
             maxConnectionsPerProxy = (Integer) maxConnectionsPerProxySpinner.getValue();
             saveSettings();
-            logMessage("Max connections per proxy updated to " + maxConnectionsPerProxy);
+            logVerboseMsg("Max connections per proxy updated to " + maxConnectionsPerProxy);
         });
         
         gbc.gridx = 1;
@@ -1915,16 +1938,16 @@ public class BurpProxyRotate implements BurpExtension {
         
         gbc.gridx = 0;
         gbc.gridy = 3;
-        controlsPanel.add(new JLabel("Enable Logging:"), gbc);
+        controlsPanel.add(new JLabel("Enable Verbose Logging:"), gbc);
         
         enableLoggingCheckbox = new JCheckBox();
-        enableLoggingCheckbox.setSelected(loggingEnabled);
+        enableLoggingCheckbox.setSelected(verboseLoggingEnabled);
         enableLoggingCheckbox.addActionListener(e -> {
-            loggingEnabled = enableLoggingCheckbox.isSelected();
+            verboseLoggingEnabled = enableLoggingCheckbox.isSelected();
             saveSettings();
-            logMessage("Logging " + (loggingEnabled ? "enabled" : "disabled"));
+            logOutput("Verbose logging " + (verboseLoggingEnabled ? "enabled" : "disabled"));
             if (socksProxyService != null) {
-                socksProxyService.setLoggingEnabled(loggingEnabled);
+                socksProxyService.setLoggingEnabled(verboseLoggingEnabled);
             }
         });
         
