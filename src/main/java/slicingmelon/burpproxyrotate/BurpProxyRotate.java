@@ -463,7 +463,7 @@ public class BurpProxyRotate implements BurpExtension {
             public void focusGained(FocusEvent e) {
                 if (unifiedField.getText().equals("socks5://host:port")) {
                     unifiedField.setText("");
-                    unifiedField.setForeground(Color.WHITE);
+                    unifiedField.setForeground(UIManager.getColor("TextField.foreground"));
                 }
             }
             
@@ -522,7 +522,7 @@ public class BurpProxyRotate implements BurpExtension {
             public void focusGained(FocusEvent e) {
                 if (bulkTextArea.getText().startsWith("# Enter")) {
                     bulkTextArea.setText("");
-                    bulkTextArea.setForeground(Color.WHITE);
+                    bulkTextArea.setForeground(UIManager.getColor("TextArea.foreground"));
                 }
             }
             
