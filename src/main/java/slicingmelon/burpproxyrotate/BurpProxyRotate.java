@@ -438,13 +438,6 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridwidth = 2;
         controlPanel.add(standaloneStatusLabel, gbc);
         
-        // Stats row
-        statsLabel = new JLabel("No active connections");
-        gbc.gridx = 2;
-        gbc.gridy = 2;
-        gbc.gridwidth = 2;
-        controlPanel.add(statsLabel, gbc);
-        
         // Enable/Disable Proxy Rotate buttons (updates Burp SOCKS settings)
         enableButton = new JButton("Enable Proxy Rotate");
         enableButton.setToolTipText("Start proxy rotation and configure Burp to use it");
@@ -482,6 +475,15 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridy = 3;
         gbc.gridwidth = 2;
         controlPanel.add(standaloneButtonPanel, gbc);
+        
+        // Stats row aligned with standalone buttons
+        statsLabel = new JLabel("No active connections");
+        gbc.gridx = 2;
+        gbc.gridy = 3;
+        gbc.gridwidth = 2;
+        gbc.anchor = GridBagConstraints.WEST;
+        controlPanel.add(statsLabel, gbc);
+        gbc.anchor = GridBagConstraints.CENTER;
         
         proxyTableModel = new ProxyTableModel();
         JTable proxyTable = new JTable(proxyTableModel);
