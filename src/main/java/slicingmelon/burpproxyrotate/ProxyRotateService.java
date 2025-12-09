@@ -332,12 +332,34 @@ public class ProxyRotateService {
             // Start the main selector loop
             selectorThreadPool.submit(() -> {
                 try {
+                    // Verify socket is still bound before starting loop
+                    if (serverChannel == null || !serverChannel.isOpen() || !serverChannel.socket().isBound()) {
+                        logError("[" + serviceId + "] Server channel closed before selector loop started!");
+                        serverRunning = false;
+                        return;
+                    }
+                    logInfo("[" + serviceId + "] Selector loop starting, channel is open and bound");
                     runSelectorLoop();
                 } catch (Exception e) {
-                    logError("[" + serviceId + "] Error in selector loop: " + e.getMessage());
+                    logError("[" + serviceId + "] Error in selector loop: " + e.getClass().getName() + " - " + e.getMessage());
+                    e.printStackTrace();
                     serverRunning = false;
+                } finally {
+                    logInfo("[" + serviceId + "] Selector loop exited");
                 }
             });
+            
+            // Small delay to let selector loop start and verify
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+            
+            // Verify the server is still running after selector started
+            if (!serverRunning || serverChannel == null || !serverChannel.isOpen()) {
+                throw new IOException("Service failed to start properly - selector loop exited");
+            }
             
             // Start cleanup thread - run every 30 seconds
             cleanupScheduler.scheduleAtFixedRate(() -> {
@@ -379,6 +401,9 @@ public class ProxyRotateService {
     private void runSelectorLoop() throws IOException {
         long lastCleanupTime = System.currentTimeMillis();
         final long CLEANUP_INTERVAL = 30000; // 30 seconds
+        
+        logInfo("[" + serviceId + "] Entering selector loop, serverRunning=" + serverRunning);
+        logInfo("[" + serviceId + "] Selector keys: " + (selector != null ? selector.keys().size() : "null"));
         
         while (serverRunning) {
             try {
