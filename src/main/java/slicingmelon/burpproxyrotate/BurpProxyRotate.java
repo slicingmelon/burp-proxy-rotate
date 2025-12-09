@@ -49,6 +49,8 @@ public class BurpProxyRotate implements BurpExtension {
     private JButton enableStandaloneButton;
     private JButton disableStandaloneButton;
     private JLabel standaloneStatusLabel;
+    private JLabel statsMainLabel;
+    private JLabel statsStandaloneLabel;
     private JSpinner portSpinner;
     private JSpinner standalonePortSpinner;
     private JLabel statusLabel;
@@ -482,13 +484,19 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridwidth = 2;
         controlPanel.add(standaloneButtonPanel, gbc);
         
-        // Stats row aligned with standalone buttons
-        statsLabel = new JLabel("No active connections");
+        // Stats rows aligned with each service
+        statsMainLabel = new JLabel("No active connections");
+        gbc.gridx = 2;
+        gbc.gridy = 2;
+        gbc.gridwidth = 2;
+        gbc.anchor = GridBagConstraints.WEST;
+        controlPanel.add(statsMainLabel, gbc);
+        
+        statsStandaloneLabel = new JLabel("No active connections");
         gbc.gridx = 2;
         gbc.gridy = 3;
         gbc.gridwidth = 2;
-        gbc.anchor = GridBagConstraints.WEST;
-        controlPanel.add(statsLabel, gbc);
+        controlPanel.add(statsStandaloneLabel, gbc);
         gbc.anchor = GridBagConstraints.CENTER;
         
         proxyTableModel = new ProxyTableModel();
@@ -753,13 +761,19 @@ public class BurpProxyRotate implements BurpExtension {
         statsUpdateTimer = new javax.swing.Timer(1000, e -> {
             boolean mainRunning = socksProxyService != null && socksProxyService.isRunning();
             boolean standaloneActive = standaloneRunning && standaloneProxyService != null && standaloneProxyService.isRunning();
-            
+
             if (mainRunning) {
-                statsLabel.setText(socksProxyService.getConnectionPoolStats());
+                statsMainLabel.setText(socksProxyService.getConnectionPoolStats());
+                statsMainLabel.setVisible(true);
+                statsStandaloneLabel.setVisible(false);
             } else if (standaloneActive) {
-                statsLabel.setText(standaloneProxyService.getConnectionPoolStats());
+                statsStandaloneLabel.setText(standaloneProxyService.getConnectionPoolStats());
+                statsStandaloneLabel.setVisible(true);
+                statsMainLabel.setVisible(false);
             } else {
-                statsLabel.setText("No active connections");
+                statsMainLabel.setText("No active connections");
+                statsMainLabel.setVisible(true);
+                statsStandaloneLabel.setVisible(false);
             }
         });
         statsUpdateTimer.start();
