@@ -30,7 +30,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.Random;
 
 /**
  * Main Burp Extension class
@@ -48,14 +47,26 @@ public class BurpProxyRotate implements BurpExtension {
     private JTextArea logTextArea;
     private JButton enableButton;
     private JButton disableButton;
+    private JButton enableStandaloneButton;
+    private JButton disableStandaloneButton;
+    private JLabel standaloneStatusLabel;
     private JLabel statusLabel;
     
     // Validate proxies
     private static final String PROXY_URL_REGEX = "^(socks[45]|http)://(?:([^:@]+):([^@]+)@)?([^:]+):(\\d+)$";
     private static final String PROXY_HOST_PORT_REGEX = "^([^:]+):(\\d+)$";
     
-    // Used to allocate a random port available
-    private int configuredLocalPort = 0;
+    // Default ports for the proxy service
+    private static final int DEFAULT_LOCAL_PORT = 11420;
+    private static final int DEFAULT_STANDALONE_PORT = 10421;
+    
+    // Configured ports
+    private int configuredLocalPort = DEFAULT_LOCAL_PORT;
+    private int configuredStandalonePort = DEFAULT_STANDALONE_PORT;
+    
+    // Standalone mode service
+    private ProxyRotateService standaloneProxyService;
+    private boolean standaloneRunning = false;
     
     // Settings with defaults
     private int bufferSize = DEFAULT_BUFFER_SIZE;
@@ -77,6 +88,7 @@ public class BurpProxyRotate implements BurpExtension {
     // Persistence keys
     private static final String PROXY_LIST_KEY = "proxyList";
     private static final String PORT_KEY = "localPort";
+    private static final String STANDALONE_PORT_KEY = "standalonePort";
     private static final String BUFFER_SIZE_KEY = "bufferSize";
     private static final String IDLE_TIMEOUT_KEY = "idleTimeout";
     private static final String MAX_CONNECTIONS_PER_PROXY_KEY = "maxConnectionsPerProxy";
@@ -222,6 +234,18 @@ public class BurpProxyRotate implements BurpExtension {
             }
         }
         
+        String standalonePortSetting = api.persistence().preferences().getString(STANDALONE_PORT_KEY);
+        if (standalonePortSetting != null) {
+            try {
+                int port = Integer.parseInt(standalonePortSetting);
+                if (port > 0 && port < 65536) {
+                    configuredStandalonePort = port;
+                }
+            } catch (NumberFormatException e) {
+                // Ignore, use default port
+            }
+        }
+        
         // Load settings
         String bufferSizeSetting = api.persistence().preferences().getString(BUFFER_SIZE_KEY);
         if (bufferSizeSetting != null) {
@@ -340,6 +364,7 @@ public class BurpProxyRotate implements BurpExtension {
     private void saveSettings() {
         api.persistence().preferences().setString(PROXY_LIST_KEY, proxyListToString());
         api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
+        api.persistence().preferences().setString(STANDALONE_PORT_KEY, String.valueOf(configuredStandalonePort));
         api.persistence().preferences().setString(BUFFER_SIZE_KEY, String.valueOf(bufferSize));
         api.persistence().preferences().setString(IDLE_TIMEOUT_KEY, String.valueOf(idleTimeoutSec));
         api.persistence().preferences().setString(MAX_CONNECTIONS_PER_PROXY_KEY, String.valueOf(maxConnectionsPerProxy));
@@ -369,45 +394,17 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridwidth = 1;
         controlPanel.add(new JLabel("Local port:"), gbc);
         
-        JCheckBox randomPortCheckbox = new JCheckBox("Random Port", true);
         JSpinner portSpinner = new JSpinner(new SpinnerNumberModel(
-                configuredLocalPort > 0 ? configuredLocalPort : 13920, 
-                1024, 65535, 1));
-        portSpinner.setEnabled(!randomPortCheckbox.isSelected());
+                configuredLocalPort, 1024, 65535, 1));
         
-        randomPortCheckbox.addActionListener(e -> {
-            boolean random = randomPortCheckbox.isSelected();
-            portSpinner.setEnabled(!random);
-            if (random) {
-                configuredLocalPort = 0;
-            } else {
-                configuredLocalPort = (Integer) portSpinner.getValue();
-            }
+        portSpinner.addChangeListener(e -> {
+            configuredLocalPort = (Integer) portSpinner.getValue();
             api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
         });
         
-        portSpinner.addChangeListener(e -> {
-            if (!randomPortCheckbox.isSelected()) {
-                configuredLocalPort = (Integer) portSpinner.getValue();
-                api.persistence().preferences().setString(PORT_KEY, String.valueOf(configuredLocalPort));
-            }
-        });
-        
-        JPanel portPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-        portPanel.add(randomPortCheckbox);
-        portPanel.add(portSpinner);
-        
         gbc.gridx = 1;
         gbc.gridy = 0;
-        controlPanel.add(portPanel, gbc);
-        
-        if (configuredLocalPort > 0) {
-            randomPortCheckbox.setSelected(false);
-            portSpinner.setEnabled(true);
-        } else {
-            randomPortCheckbox.setSelected(true);
-            portSpinner.setEnabled(false);
-        }
+        controlPanel.add(portSpinner, gbc);
         
         statusLabel = new JLabel("Status: Stopped");
         gbc.gridx = 2;
@@ -415,16 +412,44 @@ public class BurpProxyRotate implements BurpExtension {
         gbc.gridwidth = 2;
         controlPanel.add(statusLabel, gbc);
         
-        statsLabel = new JLabel("No active connections");
+        // Standalone port row
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        gbc.gridwidth = 1;
+        controlPanel.add(new JLabel("Standalone port:"), gbc);
+        
+        JSpinner standalonePortSpinner = new JSpinner(new SpinnerNumberModel(
+                configuredStandalonePort, 1024, 65535, 1));
+        
+        standalonePortSpinner.addChangeListener(e -> {
+            configuredStandalonePort = (Integer) standalonePortSpinner.getValue();
+            api.persistence().preferences().setString(STANDALONE_PORT_KEY, String.valueOf(configuredStandalonePort));
+        });
+        
+        gbc.gridx = 1;
+        gbc.gridy = 1;
+        controlPanel.add(standalonePortSpinner, gbc);
+        
+        standaloneStatusLabel = new JLabel("Standalone: Stopped");
         gbc.gridx = 2;
         gbc.gridy = 1;
         gbc.gridwidth = 2;
+        controlPanel.add(standaloneStatusLabel, gbc);
+        
+        // Stats row
+        statsLabel = new JLabel("No active connections");
+        gbc.gridx = 2;
+        gbc.gridy = 2;
+        gbc.gridwidth = 2;
         controlPanel.add(statsLabel, gbc);
         
+        // Enable/Disable Proxy Rotate buttons (updates Burp SOCKS settings)
         enableButton = new JButton("Enable Proxy Rotate");
+        enableButton.setToolTipText("Start proxy rotation and configure Burp to use it");
         enableButton.addActionListener(e -> enableProxyRotate());
         
         disableButton = new JButton("Disable Proxy Rotate");
+        disableButton.setToolTipText("Stop proxy rotation and reset Burp SOCKS settings");
         disableButton.addActionListener(e -> disableProxyRotate());
         disableButton.setEnabled(false);
         
@@ -433,9 +458,28 @@ public class BurpProxyRotate implements BurpExtension {
         controlButtonPanel.add(disableButton);
         
         gbc.gridx = 0;
-        gbc.gridy = 1;
+        gbc.gridy = 2;
         gbc.gridwidth = 2;
         controlPanel.add(controlButtonPanel, gbc);
+        
+        // Standalone mode buttons (does NOT update Burp SOCKS settings)
+        enableStandaloneButton = new JButton("Enable Standalone");
+        enableStandaloneButton.setToolTipText("Start proxy rotation on standalone port (does not modify Burp settings)");
+        enableStandaloneButton.addActionListener(e -> enableStandaloneProxyRotate());
+        
+        disableStandaloneButton = new JButton("Disable Standalone");
+        disableStandaloneButton.setToolTipText("Stop standalone proxy rotation service");
+        disableStandaloneButton.addActionListener(e -> disableStandaloneProxyRotate());
+        disableStandaloneButton.setEnabled(false);
+        
+        JPanel standaloneButtonPanel = new JPanel(new GridLayout(1, 2, 10, 0));
+        standaloneButtonPanel.add(enableStandaloneButton);
+        standaloneButtonPanel.add(disableStandaloneButton);
+        
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        gbc.gridwidth = 2;
+        controlPanel.add(standaloneButtonPanel, gbc);
         
         proxyTableModel = new ProxyTableModel();
         JTable proxyTable = new JTable(proxyTableModel);
@@ -769,20 +813,15 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
-     * Helper function to find an available port to use
+     * Check if a port is available for use
      */
-    private int findAvailablePort() {
-        Random random = new Random();
-        for (int i = 0; i < 20; i++) {
-            int port = 10000 + random.nextInt(55000);
-            try (ServerSocket socket = new ServerSocket(port)) {
-                return socket.getLocalPort();
-            } catch (IOException e) {
-                // Port is in use, try another one
-            }
+    private boolean isPortAvailable(int port) {
+        try (ServerSocket socket = new ServerSocket(port)) {
+            socket.setReuseAddress(true);
+            return true;
+        } catch (IOException e) {
+            return false;
         }
-        // If we can't find a random port, try the default as a fallback
-        return 13560;
     }
 
     /**
@@ -842,20 +881,18 @@ public class BurpProxyRotate implements BurpExtension {
      * Starts the proxy rotate service after validation
      */
     private void startProxyRotateService() {
-        int portToUse;
-        if (configuredLocalPort <= 0) {
-            portToUse = findAvailablePort();
-            if (portToUse <= 0) {
-                JOptionPane.showMessageDialog(
-                        null,
-                        "Could not find an available port. Please specify a port manually.",
-                        "Port Error",
-                        JOptionPane.ERROR_MESSAGE
-                );
-                return;
-            }
-        } else {
-            portToUse = configuredLocalPort;
+        int portToUse = configuredLocalPort;
+        
+        // Check if port is available
+        if (!isPortAvailable(portToUse)) {
+            JOptionPane.showMessageDialog(
+                    null,
+                    "Port " + portToUse + " is already in use.\nPlease try another port number.",
+                    "Port Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            logMessage("Port " + portToUse + " is already in use");
+            return;
         }
         
         final int finalPortToUse = portToUse;
@@ -960,6 +997,174 @@ public class BurpProxyRotate implements BurpExtension {
     }
     
     /**
+     * Enables the standalone proxy rotate service (does NOT modify Burp SOCKS settings)
+     */
+    private void enableStandaloneProxyRotate() {
+        if (standaloneRunning) {
+            logMessage("Standalone proxy rotate service is already running");
+            return;
+        }
+        
+        if (proxyList.isEmpty()) {
+            JOptionPane.showMessageDialog(
+                    null,
+                    "Please add at least one proxy before enabling the standalone service.",
+                    "No Proxies Available",
+                    JOptionPane.WARNING_MESSAGE
+            );
+            logMessage("Cannot start standalone service: No proxies available");
+            return;
+        }
+
+        // Validate all proxies, then start the standalone service
+        validateAllProxies(() -> {
+            // Check if we have at least one active proxy after validation
+            boolean hasActiveProxy = false;
+            proxyListLock.readLock().lock();
+            try {
+                for (ProxyEntry proxy : proxyList) {
+                    if (proxy.isActive()) {
+                        hasActiveProxy = true;
+                        break;
+                    }
+                }
+            } finally {
+                proxyListLock.readLock().unlock();
+            }
+            
+            if (!hasActiveProxy) {
+                SwingUtilities.invokeLater(() -> {
+                    JOptionPane.showMessageDialog(
+                            null,
+                            "No active proxies available. Please add valid proxies before enabling the standalone service.",
+                            "No Active Proxies",
+                            JOptionPane.WARNING_MESSAGE
+                    );
+                    logMessage("Cannot start standalone service: No active proxies available");
+                });
+                return;
+            }
+            
+            startStandaloneProxyService();
+        });
+    }
+    
+    /**
+     * Starts the standalone proxy service (does NOT modify Burp SOCKS settings)
+     */
+    private void startStandaloneProxyService() {
+        int portToUse = configuredStandalonePort;
+        
+        // Check if port is available
+        if (!isPortAvailable(portToUse)) {
+            JOptionPane.showMessageDialog(
+                    null,
+                    "Standalone port " + portToUse + " is already in use.\nPlease try another port number.",
+                    "Port Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            logMessage("Standalone port " + portToUse + " is already in use");
+            return;
+        }
+        
+        final int finalPortToUse = portToUse;
+        
+        // Create a new ProxyRotateService instance for standalone mode
+        standaloneProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
+        standaloneProxyService.setExtension(this);
+        standaloneProxyService.setSettings(
+                bufferSize,
+                idleTimeoutSec,
+                maxConnectionsPerProxy
+        );
+        
+        standaloneProxyService.setBypassCollaborator(bypassCollaborator);
+        standaloneProxyService.clearBypassDomains();
+        String domainsText = bypassDomainsTextArea.getText();
+        if (domainsText != null && !domainsText.isEmpty()) {
+            String[] domains = domainsText.trim().split("\n");
+            for (String domain : domains) {
+                domain = domain.trim();
+                if (!domain.isEmpty()) {
+                    standaloneProxyService.addBypassDomain(domain);
+                }
+            }
+        }
+        
+        standaloneProxyService.setUseRandomProxySelection(useRandomProxySelection);
+        standaloneProxyService.setLoggingEnabled(loggingEnabled);
+        
+        // Start the standalone proxy service (NO Burp settings update)
+        standaloneProxyService.start(finalPortToUse, 
+                () -> {
+                    SwingUtilities.invokeLater(() -> {
+                        standaloneRunning = true;
+                        
+                        // Update UI - note: we do NOT update Burp SOCKS settings
+                        standaloneStatusLabel.setText("Standalone: Running on 127.0.0.1:" + finalPortToUse);
+                        enableStandaloneButton.setEnabled(false);
+                        disableStandaloneButton.setEnabled(true);
+                        
+                        logMessage("Standalone proxy rotate service started on 127.0.0.1:" + finalPortToUse + " (Burp settings NOT modified)");
+                    });
+                },
+                // Failure callback
+                errorMessage -> {
+                    SwingUtilities.invokeLater(() -> {
+                        standaloneStatusLabel.setText("Standalone: Failed to start");
+                        JOptionPane.showMessageDialog(
+                                null,
+                                "Failed to start standalone proxy service: " + errorMessage,
+                                "Service Error",
+                                JOptionPane.ERROR_MESSAGE
+                        );
+                        logMessage("Failed to start standalone proxy service: " + errorMessage);
+                    });
+                }
+        );
+    }
+    
+    /**
+     * Disable the standalone proxy rotate service
+     */
+    private void disableStandaloneProxyRotate() {
+        try {
+            logMessage("Stopping standalone proxy rotate service...");
+            
+            if (standaloneProxyService != null && standaloneProxyService.isRunning()) {
+                standaloneProxyService.stop();
+                logMessage("Standalone proxy rotate service stopped");
+            } else {
+                logMessage("Standalone proxy rotate service was not running");
+            }
+            
+            standaloneRunning = false;
+            
+            // Update UI if available
+            if (standaloneStatusLabel != null) {
+                standaloneStatusLabel.setText("Standalone: Stopped");
+            }
+            if (enableStandaloneButton != null) {
+                enableStandaloneButton.setEnabled(true);
+            }
+            if (disableStandaloneButton != null) {
+                disableStandaloneButton.setEnabled(false);
+            }
+            
+        } catch (Exception ex) {
+            logMessage("Error stopping standalone proxy service: " + ex.getMessage());
+            standaloneRunning = false;
+            
+            if (enableStandaloneButton != null && disableStandaloneButton != null) {
+                JOptionPane.showMessageDialog(null,
+                        "An error occurred while stopping the standalone service: " + ex.getMessage(),
+                        "Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+    
+    /**
      * Update the server control buttons based on service state
      */
     private void updateServerButtons() {
@@ -969,6 +1174,10 @@ public class BurpProxyRotate implements BurpExtension {
                 enableButton.setEnabled(!running);
                 disableButton.setEnabled(running);
             }
+            if (enableStandaloneButton != null && disableStandaloneButton != null) {
+                enableStandaloneButton.setEnabled(!standaloneRunning);
+                disableStandaloneButton.setEnabled(standaloneRunning);
+            }
         });
     }
 
@@ -976,17 +1185,23 @@ public class BurpProxyRotate implements BurpExtension {
      * Shut down
      */
     private void shutdown() {
-        logMessage("Extension unloading. Stopping proxy service...");
+        logMessage("Extension unloading. Stopping proxy services...");
          
+        // Stop main proxy service
         if (socksProxyService != null) {
             disableProxyRotate();
+        }
+        
+        // Stop standalone proxy service
+        if (standaloneProxyService != null || standaloneRunning) {
+            disableStandaloneProxyRotate();
         }
         
         // Reset Burp's SOCKS proxy settings to ensure clean state
         resetBurpSocksSettings();
         
         saveProxies();
-        logMessage("Burp SOCKS Rotate extension shut down.");
+        logMessage("Burp Proxy Rotate extension shut down.");
 
         if (statsUpdateTimer != null && statsUpdateTimer.isRunning()) {
             statsUpdateTimer.stop();
