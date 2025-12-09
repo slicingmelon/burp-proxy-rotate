@@ -77,6 +77,8 @@ public class ProxyRotateService {
     
     // Service identifier for distinguishing multiple instances
     private String serviceId = "Main";
+    // Bind host (default all interfaces)
+    private String bindHost = "0.0.0.0";
     
     // Buffer pool for high-performance buffer management
     private BufferPool bufferPool;
@@ -283,7 +285,7 @@ public class ProxyRotateService {
             serverChannel.socket().setReuseAddress(true);
             
             // Bind to the specified port on all interfaces
-            InetSocketAddress bindAddress = new InetSocketAddress("0.0.0.0", localPort);
+            InetSocketAddress bindAddress = new InetSocketAddress(bindHost, localPort);
             serverChannel.socket().bind(bindAddress, 1000);
             
             // Verify the socket is actually bound
@@ -1880,6 +1882,20 @@ public class ProxyRotateService {
      */
     public String getServiceId() {
         return serviceId;
+    }
+    
+    /**
+     * Set bind host (e.g., 127.0.0.1 or 0.0.0.0)
+     */
+    public void setBindHost(String bindHost) {
+        this.bindHost = bindHost;
+    }
+    
+    /**
+     * Get bind host
+     */
+    public String getBindHost() {
+        return bindHost;
     }
 
     /**

@@ -903,6 +903,9 @@ public class BurpProxyRotate implements BurpExtension {
     private void startProxyRotateService() {
         final int portToUse = configuredLocalPort;
         
+        // Bind main service to loopback only
+        socksProxyService.setBindHost("127.0.0.1");
+        
         socksProxyService.setSettings(
                 bufferSize,
                 idleTimeoutSec,
@@ -1068,6 +1071,8 @@ public class BurpProxyRotate implements BurpExtension {
             standaloneProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
             standaloneProxyService.setExtension(this);
             standaloneProxyService.setServiceId("Standalone");
+            // Keep standalone bound on all interfaces
+            standaloneProxyService.setBindHost("0.0.0.0");
             standaloneProxyService.setSettings(
                     bufferSize,
                     idleTimeoutSec,
