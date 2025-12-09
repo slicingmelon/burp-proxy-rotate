@@ -892,7 +892,8 @@ public class BurpProxyRotate implements BurpExtension {
                 return;
             }
             
-            startProxyRotateService();
+            // Continue startup on the EDT to safely touch Swing components
+            SwingUtilities.invokeLater(this::startProxyRotateService);
         });
     }
     
@@ -1051,7 +1052,8 @@ public class BurpProxyRotate implements BurpExtension {
                 return;
             }
             
-            startStandaloneProxyService();
+            // Continue startup on the EDT to safely touch Swing components
+            SwingUtilities.invokeLater(this::startStandaloneProxyService);
         });
     }
     

@@ -383,6 +383,9 @@ public class ProxyRotateService {
             serverRunning = false;
             // Clean up any partially initialized resources
             try {
+                if (selectorThreadPool != null) {
+                    selectorThreadPool.shutdownNow();
+                }
                 if (cleanupScheduler != null) {
                     cleanupScheduler.shutdownNow();
                 }
@@ -395,6 +398,7 @@ public class ProxyRotateService {
             } catch (IOException cleanupEx) {
                 logError("[" + serviceId + "] Error cleaning up: " + cleanupEx.getMessage());
             }
+            selectorThreadPool = null;
             cleanupScheduler = null;
             onFailure.accept(e.getMessage());
         }
