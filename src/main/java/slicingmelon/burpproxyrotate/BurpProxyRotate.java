@@ -743,21 +743,16 @@ public class BurpProxyRotate implements BurpExtension {
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         
         statsUpdateTimer = new javax.swing.Timer(1000, e -> {
-            StringBuilder stats = new StringBuilder();
             boolean mainRunning = socksProxyService != null && socksProxyService.isRunning();
             boolean standaloneActive = standaloneRunning && standaloneProxyService != null && standaloneProxyService.isRunning();
             
             if (mainRunning) {
-                stats.append("[Main] ").append(socksProxyService.getConnectionPoolStats());
+                statsLabel.setText(socksProxyService.getConnectionPoolStats());
+            } else if (standaloneActive) {
+                statsLabel.setText(standaloneProxyService.getConnectionPoolStats());
+            } else {
+                statsLabel.setText("No active connections");
             }
-            if (standaloneActive) {
-                if (stats.length() > 0) stats.append(" | ");
-                stats.append("[Standalone] ").append(standaloneProxyService.getConnectionPoolStats());
-            }
-            if (stats.length() == 0) {
-                stats.append("No active connections");
-            }
-            statsLabel.setText(stats.toString());
         });
         statsUpdateTimer.start();
         
@@ -1132,26 +1127,30 @@ public class BurpProxyRotate implements BurpExtension {
     
     /**
      * Update the server control buttons based on service state
+     * Only one mode can run at a time (mutually exclusive)
      */
     private void updateServerButtons() {
         SwingUtilities.invokeLater(() -> {
             boolean mainRunning = socksProxyService != null && socksProxyService.isRunning();
+            boolean anyServiceRunning = mainRunning || standaloneRunning;
             
             if (enableButton != null && disableButton != null) {
-                enableButton.setEnabled(!mainRunning);
+                // Can only enable main if nothing is running
+                enableButton.setEnabled(!anyServiceRunning);
                 disableButton.setEnabled(mainRunning);
             }
             if (enableStandaloneButton != null && disableStandaloneButton != null) {
-                enableStandaloneButton.setEnabled(!standaloneRunning);
+                // Can only enable standalone if nothing is running
+                enableStandaloneButton.setEnabled(!anyServiceRunning);
                 disableStandaloneButton.setEnabled(standaloneRunning);
             }
             
-            // Each port spinner is only disabled when its own service is running
+            // Port spinners disabled when any service is running
             if (portSpinner != null) {
-                portSpinner.setEnabled(!mainRunning);
+                portSpinner.setEnabled(!anyServiceRunning);
             }
             if (standalonePortSpinner != null) {
-                standalonePortSpinner.setEnabled(!standaloneRunning);
+                standalonePortSpinner.setEnabled(!anyServiceRunning);
             }
         });
     }
