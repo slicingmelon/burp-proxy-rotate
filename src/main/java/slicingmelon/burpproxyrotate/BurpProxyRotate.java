@@ -22,7 +22,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
@@ -814,17 +813,6 @@ public class BurpProxyRotate implements BurpExtension {
         }
     }
     
-    /**
-     * Check if a port is available for use
-     */
-    private boolean isPortAvailable(int port) {
-        try (ServerSocket socket = new ServerSocket(port)) {
-            socket.setReuseAddress(true);
-            return true;
-        } catch (IOException e) {
-            return false;
-        }
-    }
 
     /**
      * Enables the Burp Proxy Rotate extension
@@ -883,21 +871,7 @@ public class BurpProxyRotate implements BurpExtension {
      * Starts the proxy rotate service after validation
      */
     private void startProxyRotateService() {
-        int portToUse = configuredLocalPort;
-        
-        // Check if port is available
-        if (!isPortAvailable(portToUse)) {
-            JOptionPane.showMessageDialog(
-                    null,
-                    "Port " + portToUse + " is already in use.\nPlease try another port number.",
-                    "Port Error",
-                    JOptionPane.ERROR_MESSAGE
-            );
-            logMessage("Port " + portToUse + " is already in use");
-            return;
-        }
-        
-        final int finalPortToUse = portToUse;
+        final int portToUse = configuredLocalPort;
         
         socksProxyService.setSettings(
                 bufferSize,
@@ -921,17 +895,17 @@ public class BurpProxyRotate implements BurpExtension {
         socksProxyService.setUseRandomProxySelection(useRandomProxySelection);
         
         // Start the internal proxy service
-        socksProxyService.start(finalPortToUse, 
+        socksProxyService.start(portToUse, 
                 () -> {
                     SwingUtilities.invokeLater(() -> {
                         // Update Burp settings
-                        updateBurpSocksSettings("127.0.0.1", finalPortToUse, true);
+                        updateBurpSocksSettings("127.0.0.1", portToUse, true);
                         
                         // Update UI
-                        statusLabel.setText("Status: Running on 127.0.0.1:" + finalPortToUse);
+                        statusLabel.setText("Status: Running on 127.0.0.1:" + portToUse);
                         updateServerButtons();
                         
-                        logMessage("SOCKS Rotate service started on 127.0.0.1:" + finalPortToUse);
+                        logMessage("SOCKS Rotate service started on 127.0.0.1:" + portToUse);
                     });
                 },
                 // Failure callback
@@ -1050,21 +1024,7 @@ public class BurpProxyRotate implements BurpExtension {
      * Starts the standalone proxy service (does NOT modify Burp SOCKS settings)
      */
     private void startStandaloneProxyService() {
-        int portToUse = configuredStandalonePort;
-        
-        // Check if port is available
-        if (!isPortAvailable(portToUse)) {
-            JOptionPane.showMessageDialog(
-                    null,
-                    "Standalone port " + portToUse + " is already in use.\nPlease try another port number.",
-                    "Port Error",
-                    JOptionPane.ERROR_MESSAGE
-            );
-            logMessage("Standalone port " + portToUse + " is already in use");
-            return;
-        }
-        
-        final int finalPortToUse = portToUse;
+        final int portToUse = configuredStandalonePort;
         
         // Create a new ProxyRotateService instance for standalone mode
         standaloneProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
@@ -1092,26 +1052,28 @@ public class BurpProxyRotate implements BurpExtension {
         standaloneProxyService.setLoggingEnabled(loggingEnabled);
         
         // Start the standalone proxy service (NO Burp settings update)
-        standaloneProxyService.start(finalPortToUse, 
+        standaloneProxyService.start(portToUse, 
                 () -> {
                     SwingUtilities.invokeLater(() -> {
                         standaloneRunning = true;
                         
                         // Update UI - note: we do NOT update Burp SOCKS settings
-                        standaloneStatusLabel.setText("Standalone: Running on 127.0.0.1:" + finalPortToUse);
+                        standaloneStatusLabel.setText("Standalone: Running on 127.0.0.1:" + portToUse);
                         updateServerButtons();
                         
-                        logMessage("Standalone proxy rotate service started on 127.0.0.1:" + finalPortToUse + " (Burp settings NOT modified)");
+                        logMessage("Standalone proxy rotate service started on 127.0.0.1:" + portToUse + " (Burp settings NOT modified)");
                     });
                 },
                 // Failure callback
                 errorMessage -> {
                     SwingUtilities.invokeLater(() -> {
                         standaloneStatusLabel.setText("Standalone: Failed to start");
+                        standaloneRunning = false;
                         updateServerButtons();
                         JOptionPane.showMessageDialog(
                                 null,
-                                "Failed to start standalone proxy service: " + errorMessage,
+                                "Failed to start standalone proxy service: " + errorMessage + 
+                                "\nPlease try another port number.",
                                 "Service Error",
                                 JOptionPane.ERROR_MESSAGE
                         );
