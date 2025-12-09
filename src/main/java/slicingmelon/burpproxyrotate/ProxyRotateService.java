@@ -358,19 +358,16 @@ public class ProxyRotateService {
                 }
             });
             
-            // Small delay to let selector loop start and verify
             try {
                 Thread.sleep(100);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
             }
             
-            // Verify the server is still running after selector started
             if (!serverRunning || serverChannel == null || !serverChannel.isOpen()) {
                 throw new IOException("Service failed to start properly - selector loop exited");
             }
             
-            // Start cleanup thread - run every 30 seconds
             cleanupScheduler.scheduleAtFixedRate(() -> {
                 try {
                     if (serverRunning) {
