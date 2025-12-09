@@ -398,6 +398,9 @@ public class BurpProxyRotate implements BurpExtension {
         
         portSpinner = new JSpinner(new SpinnerNumberModel(
                 configuredLocalPort, 1024, 65535, 1));
+        // Render ports without locale grouping (e.g., 10420 not 10,420)
+        ((JSpinner.NumberEditor) portSpinner.getEditor())
+                .getFormat().setGroupingUsed(false);
         
         portSpinner.addChangeListener(e -> {
             configuredLocalPort = (Integer) portSpinner.getValue();
@@ -422,6 +425,9 @@ public class BurpProxyRotate implements BurpExtension {
         
         standalonePortSpinner = new JSpinner(new SpinnerNumberModel(
                 configuredStandalonePort, 1024, 65535, 1));
+        // Render ports without locale grouping (e.g., 10421 not 10,421)
+        ((JSpinner.NumberEditor) standalonePortSpinner.getEditor())
+                .getFormat().setGroupingUsed(false);
         
         standalonePortSpinner.addChangeListener(e -> {
             configuredStandalonePort = (Integer) standalonePortSpinner.getValue();
