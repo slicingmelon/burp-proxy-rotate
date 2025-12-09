@@ -125,6 +125,7 @@ public class BurpProxyRotate implements BurpExtension {
         
         socksProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
         socksProxyService.setExtension(this);
+        socksProxyService.setServiceId("Main");
         
         socksProxyService.setBypassCollaborator(bypassCollaborator);
         
@@ -742,11 +743,21 @@ public class BurpProxyRotate implements BurpExtension {
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         
         statsUpdateTimer = new javax.swing.Timer(1000, e -> {
-            if (socksProxyService != null && socksProxyService.isRunning()) {
-                statsLabel.setText(socksProxyService.getConnectionPoolStats());
-            } else {
-                statsLabel.setText("No active connections");
+            StringBuilder stats = new StringBuilder();
+            boolean mainRunning = socksProxyService != null && socksProxyService.isRunning();
+            boolean standaloneActive = standaloneRunning && standaloneProxyService != null && standaloneProxyService.isRunning();
+            
+            if (mainRunning) {
+                stats.append("[Main] ").append(socksProxyService.getConnectionPoolStats());
             }
+            if (standaloneActive) {
+                if (stats.length() > 0) stats.append(" | ");
+                stats.append("[Standalone] ").append(standaloneProxyService.getConnectionPoolStats());
+            }
+            if (stats.length() == 0) {
+                stats.append("No active connections");
+            }
+            statsLabel.setText(stats.toString());
         });
         statsUpdateTimer.start();
         
@@ -1029,6 +1040,7 @@ public class BurpProxyRotate implements BurpExtension {
         // Create a new ProxyRotateService instance for standalone mode
         standaloneProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
         standaloneProxyService.setExtension(this);
+        standaloneProxyService.setServiceId("Standalone");
         standaloneProxyService.setSettings(
                 bufferSize,
                 idleTimeoutSec,
