@@ -1177,7 +1177,7 @@ public class BurpProxyRotate implements BurpExtension {
             if (enableStandaloneButton != null && disableStandaloneButton != null) {
                 // Can only enable standalone if nothing is running
                 enableStandaloneButton.setEnabled(!anyServiceRunning);
-                disableStandaloneButton.setEnabled(standaloneRunning);
+                disableStandaloneButton.setEnabled(standaloneRunning || standaloneStarting);
             }
             
             // Port spinners disabled when any service is running
