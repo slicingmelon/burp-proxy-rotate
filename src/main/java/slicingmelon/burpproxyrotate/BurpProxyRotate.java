@@ -934,13 +934,14 @@ public class BurpProxyRotate implements BurpExtension {
                 () -> {
                     SwingUtilities.invokeLater(() -> {
                         // Update Burp settings
-                        updateBurpSocksSettings("127.0.0.1", portToUse, true);
+                        String bindHost = socksProxyService.getBindHost();
+                        updateBurpSocksSettings(bindHost, portToUse, true);
                         
                         // Update UI
-                        statusLabel.setText("Status: Running on 127.0.0.1:" + portToUse);
+                        statusLabel.setText("Status: Running on " + bindHost + ":" + portToUse);
                         updateServerButtons();
                         
-                        logMessage("SOCKS Rotate service started on 127.0.0.1:" + portToUse);
+                        logMessage("SOCKS Rotate service started on " + bindHost + ":" + portToUse);
                     });
                 },
                 // Failure callback
@@ -1105,10 +1106,11 @@ public class BurpProxyRotate implements BurpExtension {
                             standaloneStarting = false;
                             
                             // Update UI - note: we do NOT update Burp SOCKS settings
-                            standaloneStatusLabel.setText("Standalone: Running on 127.0.0.1:" + portToUse);
+                            String bindHost = standaloneProxyService.getBindHost();
+                            standaloneStatusLabel.setText("Standalone: Running on " + bindHost + ":" + portToUse);
                             updateServerButtons();
                             
-                            logMessage("Standalone proxy rotate service started on 127.0.0.1:" + portToUse + " (Burp settings NOT modified)");
+                            logMessage("Standalone proxy rotate service started on " + bindHost + ":" + portToUse + " (Burp settings NOT modified)");
                         });
                     },
                     // Failure callback
