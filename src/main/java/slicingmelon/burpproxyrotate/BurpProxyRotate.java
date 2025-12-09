@@ -1063,64 +1063,80 @@ public class BurpProxyRotate implements BurpExtension {
     private void startStandaloneProxyService() {
         final int portToUse = configuredStandalonePort;
         
-        // Create a new ProxyRotateService instance for standalone mode
-        standaloneProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
-        standaloneProxyService.setExtension(this);
-        standaloneProxyService.setServiceId("Standalone");
-        standaloneProxyService.setSettings(
-                bufferSize,
-                idleTimeoutSec,
-                maxConnectionsPerProxy
-        );
-        
-        standaloneProxyService.setBypassCollaborator(bypassCollaborator);
-        standaloneProxyService.clearBypassDomains();
-        String domainsText = bypassDomainsTextArea.getText();
-        if (domainsText != null && !domainsText.isEmpty()) {
-            String[] domains = domainsText.trim().split("\n");
-            for (String domain : domains) {
-                domain = domain.trim();
-                if (!domain.isEmpty()) {
-                    standaloneProxyService.addBypassDomain(domain);
+        try {
+            // Create a new ProxyRotateService instance for standalone mode
+            standaloneProxyService = new ProxyRotateService(proxyList, proxyListLock, api.logging());
+            standaloneProxyService.setExtension(this);
+            standaloneProxyService.setServiceId("Standalone");
+            standaloneProxyService.setSettings(
+                    bufferSize,
+                    idleTimeoutSec,
+                    maxConnectionsPerProxy
+            );
+            
+            standaloneProxyService.setBypassCollaborator(bypassCollaborator);
+            standaloneProxyService.clearBypassDomains();
+            String domainsText = bypassDomainsTextArea.getText();
+            if (domainsText != null && !domainsText.isEmpty()) {
+                String[] domains = domainsText.trim().split("\n");
+                for (String domain : domains) {
+                    domain = domain.trim();
+                    if (!domain.isEmpty()) {
+                        standaloneProxyService.addBypassDomain(domain);
+                    }
                 }
             }
+            
+            standaloneProxyService.setUseRandomProxySelection(useRandomProxySelection);
+            standaloneProxyService.setLoggingEnabled(loggingEnabled);
+            
+            // Start the standalone proxy service (NO Burp settings update)
+            standaloneProxyService.start(portToUse, 
+                    () -> {
+                        SwingUtilities.invokeLater(() -> {
+                            standaloneRunning = true;
+                            standaloneStarting = false;
+                            
+                            // Update UI - note: we do NOT update Burp SOCKS settings
+                            standaloneStatusLabel.setText("Standalone: Running on 127.0.0.1:" + portToUse);
+                            updateServerButtons();
+                            
+                            logMessage("Standalone proxy rotate service started on 127.0.0.1:" + portToUse + " (Burp settings NOT modified)");
+                        });
+                    },
+                    // Failure callback
+                    errorMessage -> {
+                        SwingUtilities.invokeLater(() -> {
+                            standaloneStatusLabel.setText("Standalone: Failed to start");
+                            standaloneRunning = false;
+                            standaloneStarting = false;
+                            updateServerButtons();
+                            JOptionPane.showMessageDialog(
+                                    null,
+                                    "Failed to start standalone proxy service: " + errorMessage + 
+                                    "\nPlease try another port number.",
+                                    "Service Error",
+                                    JOptionPane.ERROR_MESSAGE
+                            );
+                            logMessage("Failed to start standalone proxy service: " + errorMessage);
+                        });
+                    }
+            );
+        } catch (Exception ex) {
+            // If preparation fails before start() registers callbacks, reset flags and notify
+            standaloneRunning = false;
+            standaloneStarting = false;
+            logMessage("Failed to start standalone proxy service: " + ex.getMessage());
+            standaloneStatusLabel.setText("Standalone: Failed to start");
+            updateServerButtons();
+            JOptionPane.showMessageDialog(
+                    null,
+                    "Failed to start standalone proxy service: " + ex.getMessage() +
+                    "\nPlease try another port number.",
+                    "Service Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
         }
-        
-        standaloneProxyService.setUseRandomProxySelection(useRandomProxySelection);
-        standaloneProxyService.setLoggingEnabled(loggingEnabled);
-        
-        // Start the standalone proxy service (NO Burp settings update)
-        standaloneProxyService.start(portToUse, 
-                () -> {
-                    SwingUtilities.invokeLater(() -> {
-                        standaloneRunning = true;
-                        standaloneStarting = false;
-                        
-                        // Update UI - note: we do NOT update Burp SOCKS settings
-                        standaloneStatusLabel.setText("Standalone: Running on 127.0.0.1:" + portToUse);
-                        updateServerButtons();
-                        
-                        logMessage("Standalone proxy rotate service started on 127.0.0.1:" + portToUse + " (Burp settings NOT modified)");
-                    });
-                },
-                // Failure callback
-                errorMessage -> {
-                    SwingUtilities.invokeLater(() -> {
-                        standaloneStatusLabel.setText("Standalone: Failed to start");
-                        standaloneRunning = false;
-                        standaloneStarting = false;
-                        updateServerButtons();
-                        JOptionPane.showMessageDialog(
-                                null,
-                                "Failed to start standalone proxy service: " + errorMessage + 
-                                "\nPlease try another port number.",
-                                "Service Error",
-                                JOptionPane.ERROR_MESSAGE
-                        );
-                        logMessage("Failed to start standalone proxy service: " + errorMessage);
-                    });
-                }
-        );
     }
     
     /**
