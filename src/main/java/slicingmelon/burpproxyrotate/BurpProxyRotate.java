@@ -929,8 +929,7 @@ public class BurpProxyRotate implements BurpExtension {
                         
                         // Update UI
                         statusLabel.setText("Status: Running on 127.0.0.1:" + finalPortToUse);
-                        enableButton.setEnabled(false);
-                        disableButton.setEnabled(true);
+                        updateServerButtons();
                         
                         logMessage("SOCKS Rotate service started on 127.0.0.1:" + finalPortToUse);
                     });
@@ -939,6 +938,7 @@ public class BurpProxyRotate implements BurpExtension {
                 errorMessage -> {
                     SwingUtilities.invokeLater(() -> {
                         statusLabel.setText("Status: Failed to start");
+                        updateServerButtons();
                         JOptionPane.showMessageDialog(
                                 null,
                                 "Failed to start SOCKS Rotate service: " + errorMessage,
@@ -968,16 +968,11 @@ public class BurpProxyRotate implements BurpExtension {
             // Always reset Burp's SOCKS proxy settings, regardless of service state
             resetBurpSocksSettings();
             
-            // Update UI if available
+            // Update UI
             if (statusLabel != null) {
                 statusLabel.setText("Status: Stopped");
             }
-            if (enableButton != null) {
-                enableButton.setEnabled(true);
-            }
-            if (disableButton != null) {
-                disableButton.setEnabled(false);
-            }
+            updateServerButtons();
             
         } catch (Exception ex) {
             logMessage("Error stopping SOCKS Rotate service: " + ex.getMessage());
@@ -989,12 +984,12 @@ public class BurpProxyRotate implements BurpExtension {
                 logMessage("Error resetting SOCKS proxy settings: " + resetEx.getMessage());
             }
             
-            if (enableButton != null && disableButton != null) {
-                JOptionPane.showMessageDialog(null,
-                        "An error occurred while stopping the service: " + ex.getMessage(),
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE);
-            }
+            updateServerButtons();
+            
+            JOptionPane.showMessageDialog(null,
+                    "An error occurred while stopping the service: " + ex.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
         }
     }
     
@@ -1104,8 +1099,7 @@ public class BurpProxyRotate implements BurpExtension {
                         
                         // Update UI - note: we do NOT update Burp SOCKS settings
                         standaloneStatusLabel.setText("Standalone: Running on 127.0.0.1:" + finalPortToUse);
-                        enableStandaloneButton.setEnabled(false);
-                        disableStandaloneButton.setEnabled(true);
+                        updateServerButtons();
                         
                         logMessage("Standalone proxy rotate service started on 127.0.0.1:" + finalPortToUse + " (Burp settings NOT modified)");
                     });
@@ -1114,6 +1108,7 @@ public class BurpProxyRotate implements BurpExtension {
                 errorMessage -> {
                     SwingUtilities.invokeLater(() -> {
                         standaloneStatusLabel.setText("Standalone: Failed to start");
+                        updateServerButtons();
                         JOptionPane.showMessageDialog(
                                 null,
                                 "Failed to start standalone proxy service: " + errorMessage,
@@ -1142,27 +1137,22 @@ public class BurpProxyRotate implements BurpExtension {
             
             standaloneRunning = false;
             
-            // Update UI if available
+            // Update UI
             if (standaloneStatusLabel != null) {
                 standaloneStatusLabel.setText("Standalone: Stopped");
             }
-            if (enableStandaloneButton != null) {
-                enableStandaloneButton.setEnabled(true);
-            }
-            if (disableStandaloneButton != null) {
-                disableStandaloneButton.setEnabled(false);
-            }
+            updateServerButtons();
             
         } catch (Exception ex) {
             logMessage("Error stopping standalone proxy service: " + ex.getMessage());
             standaloneRunning = false;
             
-            if (enableStandaloneButton != null && disableStandaloneButton != null) {
-                JOptionPane.showMessageDialog(null,
-                        "An error occurred while stopping the standalone service: " + ex.getMessage(),
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE);
-            }
+            updateServerButtons();
+            
+            JOptionPane.showMessageDialog(null,
+                    "An error occurred while stopping the standalone service: " + ex.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
         }
     }
     
@@ -1172,7 +1162,6 @@ public class BurpProxyRotate implements BurpExtension {
     private void updateServerButtons() {
         SwingUtilities.invokeLater(() -> {
             boolean mainRunning = socksProxyService != null && socksProxyService.isRunning();
-            boolean anyServiceRunning = mainRunning || standaloneRunning;
             
             if (enableButton != null && disableButton != null) {
                 enableButton.setEnabled(!mainRunning);
@@ -1183,12 +1172,12 @@ public class BurpProxyRotate implements BurpExtension {
                 disableStandaloneButton.setEnabled(standaloneRunning);
             }
             
-            // Disable port spinners when any service is running
+            // Each port spinner is only disabled when its own service is running
             if (portSpinner != null) {
-                portSpinner.setEnabled(!anyServiceRunning);
+                portSpinner.setEnabled(!mainRunning);
             }
             if (standalonePortSpinner != null) {
-                standalonePortSpinner.setEnabled(!anyServiceRunning);
+                standalonePortSpinner.setEnabled(!standaloneRunning);
             }
         });
     }
